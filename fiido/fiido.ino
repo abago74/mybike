@@ -1,10 +1,10 @@
-const String VERSION = "V_2.3.3RC";
+const String VERSION = "V_2.3.4RC";
 const boolean traceOn=false;
 
 #include <EEPROM.h>
 
-#define OLED_ADDR 0x3C   // Dirección de memória del display
-#define MPU_ADDR  0x68  // Dirección de memória del acelerómetro - Puede ser 0x68 o 0x69 segín el dispositivo.
+#define OLED_ADDR 0x3C // Dirección de memória del display
+#define MPU_ADDR  0x68 // Dirección de memória del acelerómetro - Puede ser 0x68 o 0x69 segín el dispositivo.
 #define DAC_ADDR  0x60 // Dirección DAC
 
 #include <Adafruit_SSD1306.h> // I2C DISPLAY
@@ -39,6 +39,7 @@ Adafruit_MCP4725 dac4725;
 
 // ********************** GIROSCOPIO
 MPU6050 mpu6050(MPU_ADDR); // Crea una instancia del acelerómetro.
+const int DEVOUNCE_MPU_TIME_THRESHOLD_CONST=100; // 2000 default
 
 // ------------------------- CONSTANTS ----------------------------------
 
@@ -215,7 +216,7 @@ void loop() {
   serialAtCommandListener(); // Lee comandos AT por puerto serie
   ATCommandsManager(); // Interpreta comandos AT
 
-  if (eStorage.mpuenabled && (millis() - devounceMpuTimeThreshold > 2000)) { // leemos el valor de inclinación (Y) cada 2 segundos para ayudar a calcular la potencia.
+  if (eStorage.mpuenabled && (millis() - devounceMpuTimeThreshold > DEVOUNCE_MPU_TIME_THRESHOLD_CONST)) { // leemos el valor de inclinación (Y) cada 2 segundos para ayudar a calcular la potencia.
     currentAngle=getAxisAngle(powerAngleAxis);
     if(powerAngleAxisInverter)
       currentAngle=-currentAngle;
@@ -263,6 +264,18 @@ void loop() {
     }
   }
   updatePower(); // actualizamos la potencia de salida.
+
+  /*plotter*/
+  Serial.print(currentAngle*100);
+  Serial.print("\t");
+    
+  /*plotter*/
+  Serial.print(maxPowerValue);
+  Serial.print("\t");
+  
+  /*plotter*/
+  Serial.println(currentPowerValue);
+
 }
 
 // Interruption Methods ***********************************************************************************
@@ -353,6 +366,7 @@ boolean isCrashDrop() { // Si El acelerómetro detecta que la bicicleta ha caido
 }
 
 // POWER METHODS ***********************************************************************************
+/*
 int calculateMaxPowerOld() {
   //serialTraceLn(F("6 - calculateMaxPower"));
 
@@ -378,7 +392,7 @@ int calculateMaxPowerOld() {
 
   return maxPowerValueTmp;
 }
-
+*/
 int calculateMaxPower() {
   //serialTraceLn(F("6 - calculateMaxPower"));
 
@@ -386,27 +400,27 @@ int calculateMaxPower() {
   
   int currentAngleTmp = (byte) currentAngle>0?currentAngle:0; // Si el ángulo es negativo, lo ponemos a 0 para utilizar la mínima asistencia.
   //serialTraceLn(currentAngleTmp);
-  Serial.print(" > currentAngleTmp: ");
-  Serial.print(currentAngleTmp);
-  Serial.print(" | ");
+//  Serial.print(" > currentAngleTmp: ");
+//  Serial.print(currentAngleTmp);
+//  Serial.print(" | ");
 
 
   float angleAssistanceFraction = ((1.0 * eStorage.powerMaxValue) / eStorage.powerMinAssistenceValue) / eStorage.maxPowerAngle; // Calculamos la fracción del ángulo
-  Serial.print("angleAssistanceFraction: ");
-  Serial.print(angleAssistanceFraction);
-  Serial.print(" | ");
+//  Serial.print("angleAssistanceFraction: ");
+//  Serial.print(angleAssistanceFraction);
+//  Serial.print(" | ");
   
   // Calculamos el valor máximo de potencia según el ángulo adaptado a nivel
   int tmpAnglePower = angleAssistanceFraction * currentAngleTmp * eStorage.powerMinAssistenceValue;
-  Serial.print("tmpAnglePower: ");
-  Serial.print(tmpAnglePower);
-  Serial.print(" | ");
+//  Serial.print("tmpAnglePower: ");
+//  Serial.print(tmpAnglePower);
+//  Serial.print(" | ");
 
   // Calcula la potencia en base a la pedalada
   int tmpPedalPower = (1.0 * (eStorage.powerMaxValue - eStorage.powerMinAssistenceValue) / (MIN_PLATE_TIME_SLOW - MAX_PLATE_TIME_FAST)) * (eStorage.powerMinAssistenceValue - gearPlateCompleteCicleTime) + eStorage.powerMinAssistenceValue;
-  Serial.print("tmpPedalPower: ");
-  Serial.print(tmpPedalPower);
-  Serial.println(" | ");
+//  Serial.print("tmpPedalPower: ");
+//  Serial.print(tmpPedalPower);
+//  Serial.println(" | ");
   
   // Decidimos cual es la potencia más alta.
   maxPowerValueTmp = tmpAnglePower > tmpPedalPower ? tmpAnglePower : tmpPedalPower;
@@ -414,9 +428,10 @@ int calculateMaxPower() {
   // Reajustamos niveles para que se encuentren entre los valores máximos y mínimos permitidos.
   maxPowerValueTmp = maxPowerValueTmp > eStorage.powerMaxValue ? eStorage.powerMaxValue : maxPowerValueTmp;
   maxPowerValueTmp = maxPowerValueTmp < eStorage.powerMinAssistenceValue ? eStorage.powerMinAssistenceValue : maxPowerValueTmp;
-
+  
   return maxPowerValueTmp;
 } 
+
 void updatePower() {
   //serialTraceLn(F("7 - updatePower"));
   if (currentPowerValue < maxPowerValue) { // incrementa progresivamente la potencia hasta la máxima.
@@ -669,32 +684,30 @@ int makeDiscount(int value, byte percent){
 
 void checkI2cDevices() {
   byte error, address;
-  int nDevices;
-
-  Serial.println("Scanning...");
+  byte nDevices;
+  Serial.println(F("Scanning..."));
 
   nDevices = 0;
   for(address = 1; address < 127; address++ ){
     Wire.beginTransmission(address);
     error = Wire.endTransmission();
     if (error == 0) {
-      Serial.print("I2C device found at address 0x");
+      Serial.print(F("I2C device found at address 0x"));
       if (address<16) 
-        Serial.print("0");
+        Serial.print(F("0"));
         Serial.print(address,HEX);
         Serial.println("  !");
         nDevices++;
     } else if (error==4) {
       Serial.print("Unknown error at address 0x");
       if (address<16) 
-        Serial.print("0");
+        Serial.print(F("0"));
       Serial.println(address,HEX);
     }    
   }
-  if (nDevices == 0)
-    Serial.println("No I2C devices found\n");
-  else
-    Serial.println("done\n");
+  Serial.print("> ");
+  Serial.print(nDevices, DEC);
+  Serial.println(F(" I2C devices found\n"));
 }
 
 // SERIAL AT METHODS ***********************************************************************************
