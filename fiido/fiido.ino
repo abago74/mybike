@@ -1,4 +1,4 @@
-const String VERSION = "V_2.4.0";
+const String VERSION = "V_2.4.1RC";
 const boolean plotteron = true;
 const boolean traceOn=false;
 
@@ -57,7 +57,7 @@ const byte POWER_OUT = 11; // Pin de potencia de salida.
 const byte STATUS_LED_OUT = 13; // Pin de visualización de selección de modo
 
 // ********************** DEFAULT
-const int SERIAL_PORT = 9600; // Configuración de baudios del puerto serie.
+const int SERIAL_PORT = 19200; // Configuración de baudios del puerto serie.
 const byte SERIAL_BUFFER_SIZE = 32; // Buffer de lectura del puerto serie.
 const byte EEPROM_INIT_ADDRESS = 0; // Posición de memoria que almacena los datos de modo.
 
@@ -124,8 +124,8 @@ unsigned int gearPlateCompleteCicleValue; // Contenedor del valor tomado por una
 
 
 // ********************** POWER
-int maxPowerValue; // Máxima potencia calculada según pedalada y la inclinación.
-int currentPowerValue; // Potencia actual
+unsigned int maxPowerValue; // Máxima potencia calculada según pedalada y la inclinación.
+unsigned int currentPowerValue; // Potencia actual
 
 // ********************** MODE
 int powerModeChangeTrigger; // Trigger de solicitud de cambio de modo . La variable es cambiada de estado por el método changeModeInt lanzado por la interrupción para detectar el tipo. Valores 0/1/2.
@@ -245,9 +245,8 @@ void loop() {
     showAlertScreen(messageBuilder);
     
     blinkLed(STATUS_LED_OUT, 10, 10); // Muestra el testigo de frenado. 100ms
-    showMaxPowerScreen();
   } else {
-    if(millis()-gearPlateLastPulseTime<600){
+    if(millis()-gearPlateLastPulseTime<MAX_TIME_BETWEEN_GEAR_PLATE_PULSES){
       /*
       serialTrace("PEDALEANDO - ");
       serialTrace(gearPlateLastCompleteCicleValue);
@@ -270,7 +269,7 @@ void loop() {
   
   if(plotteron){
       //plotter/
-      Serial.print((((int) currentAngle)*100)+DEFAULT_POWER_MAX_VALUE);
+      Serial.print((((int) currentAngle)*100)+DEFAULT_POWER_MAX_VALUE+1000);
       Serial.print("\t");
         
       //plotter
@@ -288,8 +287,8 @@ void gearPlatePulseInt() { // Método que incrementa el contador de pedal en cas
   if (millis() > gearPlateLastPulseTime + DEBOUNCE_TIMETHRESHOLD_GEAR_PLATE) { // Debounce Si ha pasado el tiempo de control de rebote.
 
     gearPlateCurrentPulseValue = millis()-gearPlateLastPulseTime;
-    if(gearPlateCurrentPulseValue>600){ // Si llevas más de 600ms sin pedalear
-      gearPlateCurrentPulseValue = 600;
+    if(gearPlateCurrentPulseValue>MAX_TIME_BETWEEN_GEAR_PLATE_PULSES){ // Si llevas más de 300ms sin pedalear
+      gearPlateCurrentPulseValue = MAX_TIME_BETWEEN_GEAR_PLATE_PULSES;
       gearPlatecompleteCicleCounter = GEAR_PLATE_PULSES; //Reiniciamos pulsos de plato
     }
     //serialTrace(gearPlatecompleteCicleCounter);
@@ -543,7 +542,7 @@ void showMaxPowerScreen() {
     oled1306.print(F("> Y:"));
     oled1306.print(currentAngle);
     oled1306.print(F(" PULSE :"));
-    if(gearPlateLastCompleteCicleValue<600)
+    if(millis()-gearPlateLastPulseTime<MAX_TIME_BETWEEN_GEAR_PLATE_PULSES)
       oled1306.print(gearPlateLastCompleteCicleValue*GEAR_PLATE_PULSES);
     else
       oled1306.print(F("???"));
@@ -576,8 +575,10 @@ void showEepromDataScreen() {
     oled1306.print(F("> mPW:"));
     oled1306.print(eStorage.maxPowerAngle);
   } else {
-    oled1306.print(F("> mpu DISABLED"));
+    oled1306.print(F("> mpu DIS"));
   }
+  oled1306.print(F(" > SP: "));
+  oled1306.print(SERIAL_PORT);
   oled1306.display();
   delay(2000);
 }
@@ -592,7 +593,7 @@ void showHomeScreen() {
   oled1306.print(F("FIIDO ASSISTANCE"));
   oled1306.setCursor(40, 10);
   oled1306.print(F("PROJECT"));
-  oled1306.setCursor(80, 20);
+  oled1306.setCursor(70, 20);
   oled1306.print(VERSION);
   oled1306.display();
   oled1306.setCursor(90, 10);
@@ -784,19 +785,22 @@ void ATCommandsManager() {
     } else if (command.indexOf("at+i2clist") > -1) {
       checkI2cDevices();
       
-    } else if (eStorage.mpuenabled) {
+    } else if (command.indexOf("at+anglemaxpwr") > -1) { // ángulo para la máxima potencia;
+        if (eStorage.mpuenabled) {
+          eStorage.maxPowerAngle = value < DEFAULT_MAX_POWER_ANGLE ? value : DEFAULT_MAX_POWER_ANGLE;
+          oled1306.print(F("> maxPowerAngle: "));
+          oled1306.print(eStorage.maxPowerAngle);
+        }
 
-      if (command.indexOf("at+anglemaxpwr") > -1) { // ángulo para la máxima potencia;
-        eStorage.maxPowerAngle = value < DEFAULT_MAX_POWER_ANGLE ? value : DEFAULT_MAX_POWER_ANGLE;
-        oled1306.print(F("> maxPowerAngle: "));
-        oled1306.print(eStorage.maxPowerAngle);
-
-      } else if (command.indexOf("at+mpucalibrate") > -1) { // Calibrar posición de placa.
-        calibrate(mpu6050);
-      }
-
+    } else if (command.indexOf("at+mpucalibrate") > -1) { // Calibrar posición de placa.
+        if (eStorage.mpuenabled)
+          calibrate(mpu6050);
+          
+    } else {
+      oled1306.print(F("Unknown command."));
+      
     }
-
+    
     newSerialDataFlag = false;
     blinkLed(STATUS_LED_OUT, 15, 30);
   }
