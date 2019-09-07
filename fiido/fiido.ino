@@ -1,4 +1,4 @@
-const String VERSION = "V_2.4.12";
+const String VERSION = "V_2.4.13RC";
 const boolean plotteron=true;
 const boolean traceOn=!plotteron;
 
@@ -169,7 +169,7 @@ void setup() {
   // Lee configuración desde la eeprom.
   EEPROM.get(EEPROM_INIT_ADDRESS, eStorage); // Captura los valores desde la eeprom
 
-  tmpanglepowermedia = ((eStorage.powerMaxValue-eStorage.powerMinValue)/30); // Calcula promedio por ángulos
+  tmpanglepowermedia = ((eStorage.powerMaxValue-eStorage.powerMinValue)/DEFAULT_MAX_POWER_ANGLE); // Calcula promedio por ángulos
   Serial.begin(SERIAL_PORT); //Inicializa el puesto serie
 
   oled1306.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR); // inicializamos pantalla en dirección i2c
@@ -639,6 +639,7 @@ void showMaxPowerScreen() {
 
 void showEepromDataScreen() {
   //serialTraceLn(F("16 showEepromDataScreen"));
+  oled1306.clearDisplay();
   oled1306.setCursor(START_LINE, LINE_1);
   oled1306.print(F("> pwr M|BM|BD: "));
   oled1306.print(eStorage.powerMode);
@@ -780,37 +781,38 @@ void initThrotleMinMax(){
 
   while (true){
     initThrotle = analogRead(THROTTLE_IN)*POWER_INPUT_MULTIPLIER;
-    delay(500);
+    delay(100);
     endThrotle = analogRead(THROTTLE_IN)*POWER_INPUT_MULTIPLIER;
     if(initThrotle==endThrotle){
       cont++;
       if(cont==1){
         oled1306.setCursor(START_LINE, LINE_1);
-        oled1306.print("MN: ");
+        oled1306.print("MN: "); // Min value
         oled1306.print(initThrotle);
         eStorage.powerMinValue=initThrotle;
         oled1306.print(" > ");
         oled1306.display();
-        delay(3000);
-      }else if(cont==2){
-        oled1306.print("MX: ");
+        oled1306.print("MX: "); // Max value
+        delay(2000);
+      } else if(cont==2){
         oled1306.print(initThrotle);
         eStorage.powerMaxValue=initThrotle;
         oled1306.display();
-        
+        oled1306.setCursor(START_LINE, LINE_2);
+        oled1306.print("MA: "); // Min assitence value       
+        eStorage.powerMinAssistenceValue=makeDiscount(eStorage.powerMaxValue-eStorage.powerMinValue,80)+eStorage.powerMinValue;
+        oled1306.print(eStorage.powerMinAssistenceValue);
+        oled1306.display();
+        break;
       }
     }
-    if(cont>1){
-      oled1306.setCursor(START_LINE, LINE_2);
-      oled1306.print("MID: ");        
-      eStorage.powerMinAssistenceValue=makeDiscount(eStorage.powerMaxValue-eStorage.powerMinValue,80)+eStorage.powerMinValue;
-      oled1306.print(eStorage.powerMinAssistenceValue);
-      oled1306.display();
-      break;
-    }
-    
   }
-  blinkLed(STATUS_LED_OUT, 100, 100);
+
+  showThrotleMinMax();
+  EEPROM.put(EEPROM_INIT_ADDRESS, eStorage);
+  blinkLed(STATUS_LED_OUT, 30, 10);
+  showThrotleMinMax();
+  blinkLed(STATUS_LED_OUT, 30, 100);
 }
 
 void showThrotleMinMax(){
