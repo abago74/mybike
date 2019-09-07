@@ -1,4 +1,4 @@
-const String VERSION = "V_2.3.0RC1";
+const String VERSION = "V_2.3.2";
 const boolean traceOn=false;
 
 #include <EEPROM.h>
@@ -134,8 +134,6 @@ long devounceMpuTimeThreshold; // Tiempo entre las medidas de ángulo
 byte powerAngleAxis; // Eje que controla el ángulo de potencia
 boolean powerAngleAxisInverter; // Inversor del eje de potencia
 byte crashAngleAxis; // Eje que controla el ángulo de control de caida
-int16_t ax, ay, az; // Variables de control de Acelerómetro xyz
-//int16_t gx, gy, gz; // Variables de control de Giroscopio xyz
 
 // ********************** DEFAULT
 
@@ -168,9 +166,6 @@ void setup() {
     oled1306.print(mpu6050.testConnection() ? F("OK") : F("KO"));
     devounceMpuTimeThreshold=millis();
   } else {
-    // Inicializamos valores de inclinación sin acelerómetro.
-    ax = ZERO; ay = ZERO; az = 1;
-//  gx = 0; gy = 0; gz = 1;
     oled1306.print(F(" - MPU"));
   }
 
@@ -202,12 +197,6 @@ void setup() {
   powerAngleAxis = X; // Eje que controla el ángulo de potencia
   powerAngleAxisInverter = true; // Inversor del eje de potencia
   crashAngleAxis=(powerAngleAxis == X)?Y:X; // Eje que controla el ángulo de control de caida
-  ax = ZERO;
-  ay = ZERO;
-  az=1;
-//  gx=ZERO;
-//  gy=ZERO;
-//  gz=1;
 
   //initFlashLeds(); // Ejecuta los leds de inicio de script. y muestra los modos.
 
@@ -325,11 +314,20 @@ void changeModeInt() {
 float getAxisAngle(int axis) {  
   //serialTraceLn(F("4 getAxisAngle"));
   //Calcular los angulos de inclinacion desde el acelerómetro;
-  
-  mpu6050.getAcceleration(&ax, &ay, &az); // Lee los datos del acelerómetro. 
-  //mpu6050.getRotation(&gx, &gy, &gz);  // Lee los datos del giroscopio
-  //mpu6050.getMotion6(&ax, &ay, &az, &gx, &gy, &gz); // Lee los valores de acelerómetro y giroscopio
-  
+
+  int16_t ax, ay, az; // Variables de control de Acelerómetro xyz
+  //int16_t gx, gy, gz; // Variables de control de Giroscopio xyz   
+
+  if (eStorage.mpuenabled) {
+    mpu6050.getAcceleration(&ax, &ay, &az); // Lee los datos del acelerómetro. 
+    //mpu6050.getRotation(&gx, &gy, &gz);  // Lee los datos del giroscopio
+    //mpu6050.getMotion6(&ax, &ay, &az, &gx, &gy, &gz); // Lee los valores de acelerómetro y giroscopio
+  } else {
+    // Inicializamos valores de inclinación sin acelerómetro.
+    ax = ZERO; ay = ZERO; az = 1;
+    //gx = 0; gy = 0; gz = 1;
+  }
+
   float accel_ang;
   float levelAxisAngle = LZERO;
   switch (axis) {
@@ -803,7 +801,6 @@ void ATCommandsManager() {
 
     } else if (command.indexOf(F("at+mpuoff")) > -1) {
       eStorage.mpuenabled = false;
-      ax = ZERO; ay = ZERO; az = 1;
 
     } else if (command.indexOf(F("at+shutdown")) > -1) {
       asm volatile ("  jmp 0");
@@ -819,8 +816,8 @@ void ATCommandsManager() {
         int levelCounter = 10;
         float accel_ang_x, accel_ang_y;
         while (levelCounter-- > 0) { // tomamos 10 medidas para hacer la meria
-          accel_ang_x = accel_ang_x + atan(ax / sqrt(pow(ay, 2) + pow(az, 2))) * (180.0 / 3.14);
-          accel_ang_y = accel_ang_y + atan(ay / sqrt(pow(ax, 2) + pow(az, 2))) * (180.0 / 3.14);
+          accel_ang_x = getAxisAngle(X); //accel_ang_x + atan(ax / sqrt(pow(ay, 2) + pow(az, 2))) * (180.0 / 3.14);
+          accel_ang_y = getAxisAngle(Y); //accel_ang_y + atan(ay / sqrt(pow(ax, 2) + pow(az, 2))) * (180.0 / 3.14);
           delay(100);
         }
         
