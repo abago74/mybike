@@ -4,12 +4,11 @@
   #include "Wire.h"
 #endif
 #include "MPU6050.h"
-//--#include "Adafruit_SSD1306.h"
-//--#include "Adafruit_GFX.h"
+#include "Adafruit_SSD1306.h"
+#include "Adafruit_GFX.h"
 
 #define MPU_ADDRESS 0x68  // Dirección de memória del acelerómetro - Puede ser 0x68 o 0x69 segín el dispositivo.
 #define OLED_ADDR   0x3C   // Dirección de memória del display
-//--Adafruit_SSD1306 display(-1); 
 
 // notas 
 //<= 10º MIN_POWER
@@ -22,19 +21,23 @@
 //si pedaleas 24 pulsos por segundo ponemos la máxima potencia 25km/h.
 //si pedaleas 12 pulsos por minuto asistencia a 15km/h
 
-//V_2.1.8
+//V_2.2.0
+
+// ********************** display
+#define OLED_RESET 4
+Adafruit_SSD1306 OLED(OLED_RESET); // Creamos instancia de la pantalla
 
 // ********************** Pins
 // > Inputs
 const int GEAR_PLATE_IN = 2; // Pin de entrada de sensor de pedal por interrupcion. pull_down 0V
 const int MODE_IN = 3; // Pin de entrada de cambio de modo. pull_down 0V
 const int BRAKE_IN = 6; //Pin del sensor hall de freno. pull_up 5V
+
 // > Outputs
 const int POWER_OUT = 11; // Pin de potencia de salida.
 const int STATUS_LED_OUT = 13; // Pin de visualización de selección de modo
 
 // ********************** Def Consts
-
 const int SERIAL_PORT = 9600; // Configuración de baudios del puerto serie.
 
 const int GEAR_PLATE_PULSES = 12; // Pulsos proporcionados por el plato en cada vuelta.
@@ -113,15 +116,15 @@ int initDefaultEepromDataStatus; // almacena el estado de freno en cada ciclo
 // main
 void loop() {
   if((millis()-initDefaultEepromDataTimer) < 10000 && initDefaultEepromDataFlag>=0){
-    delay(500);
+    delay(100);
     if(initDefaultEepromDataFlag==0){
       initDefaultEepromDataFlag--;
       initDefaultEepromData();
     }else{
       int currentvalue = digitalRead(BRAKE_IN);
       if(currentvalue != initDefaultEepromDataStatus){
-        Serial.print(initDefaultEepromDataFlag);
-        Serial.print("_");
+        //Serial.print(initDefaultEepromDataFlag);
+        //Serial.print("_");
         initDefaultEepromDataStatus=currentvalue;
         initDefaultEepromDataFlag--;      
       }
@@ -143,15 +146,14 @@ void loop() {
   if((digitalRead(BRAKE_IN) == LOW || isCrashDrop()) && powerCurrentValue>POWER_MIN_VALUE){ // Resetea el acelerador si se toca el freno o se está en estado caida y la potencia de acelerador no es la mínima.
       reset(true); // Resetea valores cortando la potencia en modo seguridad
       updatePower();  // Actualizamos potencia de salida.
-      
-      outputMessage = " > BRAKE: \t maxPowerValue: \t";
-      outputMessage += maxPowerValue;
-      Serial.println(outputMessage);
+
+      printMaxPowerLCD(getAngle(), pulseEnd-pulseInit);
       
       blinkLed(STATUS_LED_OUT, 15, 20); // Muestra el testigo de frenado. 300ms
   }else{
      if(millis()-gearPlateLastPulseTime < MAX_TIME_BETWEEN_GEAR_PLATE_PULSES){ // Si en los ultimos n segundos se ha detectado un pulso de pedaleo
         //Serial.println("PEDALEANDO");
+        fillPedalIcon(WHITE);
         // V En cada ciclo de disco ejecutamos las operaciones necesarias. 
         // V Como calcular la potencia dependiendo de la potencia de pedalada. A esto le añadiremos el control de inclinación cuando esté implementado.
         if (completeGearPlateCicle){ 
@@ -159,11 +161,22 @@ void loop() {
         }
      }else{ // El sensor no detecta pulso de pedaleo. // TODO decrementa progresivamente la pedalada.    
       //Serial.println("PARADO");
+      fillPedalIcon(BLACK);
       reset(false); // Resetea valores cortando la potencia en modo progresivo
      }  
   }
   updatePower(); // actualizamos la potencia de salida.
   //showStatus(); // Muestra el led de estado
+}
+
+void fillPedalIcon(uint16_t color){
+  int y,x;
+  for (y=27; y<=31; y++){
+    for (x=122; x<126; x++){
+      OLED.drawPixel(x, y, color); 
+    }
+  } 
+  OLED.display();
 }
 
 float getAngle(){
@@ -212,19 +225,28 @@ void calculateMaxPower(int timeCicle, float angle){
     maxPowerValue = currentPowerByAngle>currentPowerByPedal?currentPowerByAngle:currentPowerByPedal;
     maxPowerValue = maxPowerValue>POWER_MAX_VALUE?POWER_MAX_VALUE:maxPowerValue;
     maxPowerValue = maxPowerValue<POWER_MIN_ASSISTENCE_VALUE?POWER_MIN_ASSISTENCE_VALUE:maxPowerValue;
- 
-    
-    outputMessage = F("\tInclinacion en eje Y:");
-    outputMessage += angle;
-    outputMessage += "\tPULSO :";
-    outputMessage += timeCicle;
-    outputMessage += "\tmaxPowerValue :";
-    outputMessage += maxPowerValue;
-    outputMessage += "\tpowerCurrentValue :";
-    outputMessage += powerCurrentValue;
-    Serial.println(outputMessage);
-    
+
+    printMaxPowerLCD(angle, timeCicle);
+
     completeGearPlateCicle=false; // Reseteamos ciclo de plato.
+}
+
+
+void printMaxPowerLCD(float angle, int timeCicle) {
+  OLED.clearDisplay();
+  OLED.setCursor(0,0);
+    OLED.print("> Y:");
+    OLED.print(angle);
+    OLED.print(" PULSE :");
+    OLED.print(timeCicle);
+    
+    OLED.setCursor(0,10);
+    OLED.print("> maxPwr: ");
+    OLED.print(maxPowerValue);
+    OLED.setCursor(0,20);
+    OLED.print("> curPwr: ");
+    OLED.print(powerCurrentValue);
+  OLED.display();
 }
 
 void updatePower(){
@@ -241,8 +263,7 @@ void updatePower(){
       }
       
       if(millis()-gearPlateLastPulseTime > MAX_TIME_BETWEEN_GEAR_PLATE_PULSES && powerCurrentValue > POWER_MIN_VALUE){ 
-        Serial.print("PWR-- -> ");
-        Serial.println(powerCurrentValue);
+        printMaxPowerLCD(getAngle(), pulseEnd-pulseInit);
       }
       analogWrite(POWER_OUT, powerCurrentValue/20); // Actualiza la salida con la potencia de acelerador.
 }
@@ -299,12 +320,6 @@ void changeModeFuncion(){
       eStorage.powerMode = 0;
     }
 
-    outputMessage = "ChangeModeFuncion: (";
-    outputMessage += eStorage.powerMode;
-    outputMessage += ") - pasos: ";
-    outputMessage += POWER_STEPTS[eStorage.powerMode];
-    Serial.println(outputMessage);
-      
     blinkLed(STATUS_LED_OUT, eStorage.powerMode+1, (600/(eStorage.powerMode+1)));
     powerCurrentValue=POWER_MIN_VALUE; 
   }else if(powerModeChangeTrigger == 2){
@@ -314,28 +329,10 @@ void changeModeFuncion(){
     }else{
       eStorage.powerBrakeMode = 0;
     }
-    
-    outputMessage = "ChangeBrakeModeFuncion: (";
-    outputMessage += eStorage.powerBrakeMode;
-    outputMessage += ") - pasos: ";
-    outputMessage += POWER_STEPTS[eStorage.powerBrakeMode];
-    Serial.println(outputMessage);
-    
     blinkLed(STATUS_LED_OUT,eStorage.powerBrakeMode+1,(600/(eStorage.powerBrakeMode+1)));
     powerCurrentValue = POWER_MIN_VALUE; 
   }  
 }
-
-/*
-void showStatus(){ // Muestra el led de estado
-  if(powerCurrentValue > maxPowerValue*0.8 && powerCurrentValue > POWER_MIN_VALUE){
-//  if(powerCurrentValue-POWER_MIN_VALUE > ((maxPowerValue)*0.8) && powerCurrentValue > POWER_MIN_VALUE){ //Enciende status de potencia cuando el acelerador está superando el 80% 
-    digitalWrite(STATUS_LED_OUT, HIGH);
-  }else{
-    digitalWrite(STATUS_LED_OUT, LOW);
-  }  
-}
-*/
 
 
 void reset(boolean brake){
@@ -349,26 +346,41 @@ void reset(boolean brake){
       }   
 }
 
-void printEeprom(){
-  outputMessage = "\n\t > powerMode: ";
-  outputMessage += eStorage.powerMode;
-  outputMessage += "\n\t > powerBrakeMode: ";
-  outputMessage += eStorage.powerBrakeMode;
-  outputMessage += "\n\t > maxPowerAngle: ";
-  outputMessage += eStorage.maxPowerAngle;
-  outputMessage += "\n\t > level[X|Y]Angle: X:";
-  outputMessage += eStorage.levelXAngle;
-  outputMessage += " Y:";
-  outputMessage += eStorage.levelYAngle;
-  Serial.println(outputMessage);
+void printEepromLCD() {
+  OLED.setCursor(0,10);
+  OLED.print("> pwr M|BM: ");
+  OLED.print(eStorage.powerMode);
+  OLED.print("|");
+  OLED.print(eStorage.powerBrakeMode);
+  OLED.setCursor(0,20);
+  OLED.print("> mPW:");
+  OLED.print(eStorage.maxPowerAngle);
+  OLED.print(" X:");
+  OLED.print(eStorage.levelXAngle);
+  OLED.print(" Y:");
+  OLED.print(eStorage.levelYAngle); 
+  OLED.display();
 }
+
 // init
 void setup() {
 
     Serial.begin(SERIAL_PORT); //Inicializa el puesto serie
-    outputMessage = " | Fiido D1|D2 asistence project | \n";
-    outputMessage += "***********************************\n";
-    Serial.println(outputMessage);
+    
+    OLED.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR); // inicializamos pantalla en dirección i2c
+    
+    OLED.clearDisplay();
+    OLED.setTextSize(1);
+    OLED.setTextColor(WHITE);
+
+    OLED.setCursor(15,0);
+    OLED.print("FIIDO ASSISTANCE");
+    OLED.setCursor(40,10);
+    OLED.print("PROJECT");    
+    OLED.display();
+    delay(1000);
+    OLED.clearDisplay();
+    OLED.display();
     
     if(mpuenabled){
         // MPU6050
@@ -379,17 +391,18 @@ void setup() {
         #endif
         
         mpu6050.initialize(); // Inicializa el acelerómetro.
-        Serial.println(mpu6050.testConnection() ? F(" > MPU iniciado correctamente.") : F(" * ERROR: Error al iniciar MPU."));
-        
+        //Serial.println(mpu6050.testConnection() ? F(" > MPU iniciado correctamente.") : F(" * ERROR: Error al iniciar MPU."));
+        OLED.setCursor(0,0);
+        OLED.print(" + MPU");    
     }else{
       // Inicializamos valores de inclinación sin acelerómetro.
       ax=0; ay=0; az=1;
+      OLED.print(" - MPU");    
     }
 
     // Lee configuración desde la eeprom.
     EEPROM.get(EEPROM_INIT_ADDRESS, eStorage); // Captura los valores desde la eeprom
-    Serial.println(" > Reading Eeprom: ");
-    printEeprom();
+    OLED.print(" > EEP");    
 
     //Inicializamos los pines
     pinMode(LED_BUILTIN,OUTPUT); // Salida led modo/estado. //STATUS_LED_OUT
@@ -398,7 +411,7 @@ void setup() {
     pinMode(BRAKE_IN, INPUT); // Entrada de control de freno.
     pinMode(GEAR_PLATE_IN, INPUT); // Entrada Interrupción  - control de pedalaleo.
     pinMode(MODE_IN, INPUT); // Entrada Interrupción - control nodo de operación.
-        
+      
     // Inicialización de variables
     debounceLastGearPlatePulseTime = 0; // Inicializamos el timer de control de rebote
     gearPlateLastPulseTime = 0; // Inicializamos el timer de último pulso de pedaleo.
@@ -409,25 +422,25 @@ void setup() {
     // Definición de interrupciones 
     attachInterrupt(digitalPinToInterrupt(GEAR_PLATE_IN), gearPlatePulseInt, RISING); // Definición de la interrupción para la entrada de pin de pedal.
     attachInterrupt(digitalPinToInterrupt(MODE_IN), changeModeInt, RISING); // Definición de la interrupción para la entrada de pin de cambio de modo.
-
-    outputMessage = "\n";
-    outputMessage += " > Init Done!!!\n";
-    outputMessage += "***********************************";
-    Serial.println(outputMessage);
+    OLED.print(" > PINS"); 
+    OLED.display(); 
 
     // Activamos el modo de reseteo de datos de la eeprom desde el pedal de freno. se precisa realizar cambios de estado en el freno durante 10 segundos.
     if(digitalRead(BRAKE_IN) == LOW){
-      Serial.print(" > Waiting code for init config...\t");
+      OLED.setCursor(10,0);
+      OLED.print(" > Waiting init cfg");    
+      OLED.display();
+      //Serial.print(" > Waiting code for init config...\t");
       initDefaultEepromDataFlag=6;
       initDefaultEepromDataTimer=millis();
     }
 
-    //initDisplay();
+    printEepromLCD();
 }
 
 // init methods
 void initFlashLeds(){
-    Serial.print(" .");
+    //Serial.print(" .");
     blinkLed(STATUS_LED_OUT, eStorage.powerMode+1, 60); // Muestra el modo de aceleración.
     runDelay(1000);
     blinkLed(STATUS_LED_OUT, eStorage.powerBrakeMode+1, 60); // Muestra el modo de desaceleración.
@@ -435,7 +448,7 @@ void initFlashLeds(){
     digitalWrite(STATUS_LED_OUT, HIGH); // Muestra el led de fin de inicialización.
     runDelay(500);
     digitalWrite(STATUS_LED_OUT, LOW);
-    Serial.println(".");
+    //Serial.println(".");
 }
 
 // Serial inputs methods
@@ -474,17 +487,22 @@ AT Commands
 void manageATCommands() {
 
   if (newSerialData == true) {
-
     blinkLed(STATUS_LED_OUT, 1, 500);
     String command = getValue(receivedChars, '=' , 0);
     command.toLowerCase();
     int value = getValue(receivedChars, '=' , 1).toInt();
     
-    outputMessage = "> command: ";
-    outputMessage += command;    
-    outputMessage += "\tvalue: ";
-    outputMessage += value;
-    Serial.println(outputMessage);
+    OLED.clearDisplay();
+    OLED.setCursor(0,0);
+    OLED.print("> "); 
+    String tmpCommand = command;
+    tmpCommand.toUpperCase();
+    OLED.print(tmpCommand);
+    if(value>0){
+      OLED.print("?"); 
+      OLED.print(value);  
+    }
+    OLED.setCursor(0,10);
     
     if(command.indexOf("at+save")>-1){
       updateEepromData();
@@ -493,36 +511,35 @@ void manageATCommands() {
       initDefaultEepromData();
 
     } else if(command.indexOf("at+eelist")>-1){
-      printEeprom();
+      //printEeprom();
+      printEepromLCD();
       
     } else if(command.indexOf("at+pwrup")>-1){ // modo de incremento de potencia progresiva.
-      eStorage.powerMode=(value<(sizeof(POWER_STEPTS)/2))?value:POWER_STEPTS_DEFAULT_POSITION;      
-      outputMessage = "update eStorage.powerBrakeMode: ";
-      outputMessage += eStorage.powerMode;
-      Serial.println(outputMessage);
+      eStorage.powerMode=(value<(sizeof(POWER_STEPTS)/2))?value:POWER_STEPTS_DEFAULT_POSITION;
+      OLED.print("> powerBrakeMode: ");
+      OLED.print(eStorage.powerMode);
  
     } else if(command.indexOf("at+pwrdw")>-1){ // modo de decremento de potencia progresiva.
       eStorage.powerBrakeMode=(value<(sizeof(POWER_STEPTS)/2))?value:POWER_STEPTS_DEFAULT_POSITION;
-      outputMessage = "update eStorage.powerBrakeMode: ";
-      outputMessage += eStorage.powerBrakeMode;
-      Serial.println(outputMessage);
+      OLED.print("> powerBrakeMode: ");
+      OLED.print(eStorage.powerBrakeMode);
 
     } else if(command.indexOf("at+anglemaxpwr")>-1){ // ángulo para la máxima potencia;
       eStorage.maxPowerAngle=value<DEFAULT_MAX_POWER_ANGLE?value:DEFAULT_MAX_POWER_ANGLE;
-      outputMessage = "update eStorage.maxPowerAngle: ";
-      outputMessage += eStorage.maxPowerAngle;
-      Serial.println(outputMessage);
+      OLED.print("> maxPowerAngle: ");
+      OLED.print(eStorage.maxPowerAngle);
+
       
     } else if(command.indexOf("at+level")>-1){ // Calibrar posición de placa.
       float accel_ang_x = atan(ax / sqrt(pow(ay, 2) + pow(az, 2)))*(180.0 / 3.14);
       float accel_ang_y = atan(ay / sqrt(pow(ax, 2) + pow(az, 2)))*(180.0 / 3.14);
       eStorage.levelXAngle = (int) accel_ang_x;
       eStorage.levelYAngle = (int) accel_ang_y;
-      outputMessage = "update eStorage.level [X|Y] Angle: X:";
-      outputMessage += eStorage.levelXAngle;
-      outputMessage += " Y:";
-      outputMessage += eStorage.levelYAngle;
-      Serial.println(outputMessage);
+      OLED.print("> [X|Y]: ");
+      OLED.print(eStorage.levelXAngle);
+      OLED.print(" | ");
+      OLED.print(eStorage.levelYAngle);
+      OLED.display();
     }
     newSerialData = false;
     blinkLed(STATUS_LED_OUT, 15, 30);
@@ -545,7 +562,7 @@ String getValue(String data, char separator, int index) { // Split string and ge
 }
 
 void initDefaultEepromData(){
-  Serial.println("\n > Initializing default config...");
+  //Serial.println("\n > Initializing default config...");
   blinkLed(STATUS_LED_OUT, 150, 3);
   eStorage.powerMode=POWER_STEPTS_DEFAULT_POSITION;;
   eStorage.powerBrakeMode=POWER_STEPTS_DEFAULT_POSITION;
@@ -557,21 +574,7 @@ void initDefaultEepromData(){
 }
 
 void updateEepromData(){  
-    outputMessage = " > Updating eeprom... ";
-    outputMessage += "\n\t > powerMode: ";
-    outputMessage += eStorage.powerMode;
-    outputMessage += "\n\t > powerBrakeMode: ";
-    outputMessage += eStorage.powerBrakeMode;
-    outputMessage += "\n\t > maxPowerAngle: ";
-    outputMessage += eStorage.maxPowerAngle;
-
-    outputMessage += "\n\t > level [X|Y] Angle: X:";
-    outputMessage += eStorage.levelXAngle;
-    outputMessage += " Y:";
-    outputMessage += eStorage.levelYAngle;
-
-    outputMessage += "\n\n***********************************";
-    Serial.println(outputMessage);    
+    printEepromLCD();
     EEPROM.put(EEPROM_INIT_ADDRESS, eStorage); // Actualizan los datos de modos entrega de potencia en la eeprom
 }
 
@@ -595,24 +598,21 @@ void blinkLed(int ledPin, int repeats, int time){ // Ejecuta un parpadeo en el l
 // screen methods
 void initDisplay(){
 // initialize and clear display
-  display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR);
-  display.clearDisplay();
-  display.display();
 
   // display a pixel in each corner of the screen
-  display.drawPixel(0, 0, WHITE);
-  display.drawPixel(127, 0, WHITE);
-  display.drawPixel(0, 63, WHITE);
-  display.drawPixel(127, 63, WHITE);
+  OLED.drawPixel(0, 0, WHITE);
+  OLED.drawPixel(127, 0, WHITE);
+  OLED.drawPixel(0, 63, WHITE);
+  OLED.drawPixel(127, 63, WHITE);
 
   // display a line of text
-  display.setTextSize(1);
-  display.setTextColor(WHITE);
-  display.setCursor(27,30);
-  display.print("FIIDO ASSISTANCE");
+  OLED.setTextSize(1);
+  OLED.setTextColor(WHITE);
+  OLED.setCursor(27,30);
+  OLED.print("FIIDO ASSISTANCE");
 
   // update display with all of the above graphics
-  display.display();
+  OLED.display();
 }
 
 */
