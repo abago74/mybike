@@ -1,6 +1,6 @@
-const String VERSION = "V_2.4.8";
-const boolean plotteron = false;
-const boolean traceOn=true;
+const String VERSION = "V_2.4.9";
+const boolean plotteron = true;
+const boolean traceOn=false;
 
 #include <EEPROM.h>
 
@@ -315,7 +315,7 @@ void gearPlatePulseInt() { // Método que incrementa el contador de pedal en cas
       gearPlateCurrentPulseValue = MAX_TIME_BETWEEN_GEAR_PLATE_PULSES;
       gearPlatecompleteCicleCounter = GEAR_PLATE_PULSES; //Reiniciamos pulsos de plato
     }
-    serialTrace(gearPlatecompleteCicleCounter);
+    //serialTrace(gearPlatecompleteCicleCounter);
     //serialTrace(" --->>> pedal : ");
     //serialTraceLn(gearPlateCurrentPulseValue);
     
@@ -407,7 +407,6 @@ int getpwm(int inputValue){ // 240 -> 3,58V | 73 -> 1.108V
 }
 
 int calculateMaxPower() {
-
   String message;
   //serialTraceLn(F("6 - calculateMaxPower"));
 
@@ -456,15 +455,28 @@ int calculateMaxPower() {
 void updatePower() {
   //serialTraceLn(F("7 - updatePower"));
   if (currentPowerValue < maxPowerValue) { // incrementa progresivamente la potencia hasta la máxima.
+    //Serial.print("INC ");
     currentPowerValue = currentPowerValue + POWER_STEPTS[eStorage.powerMode];
     if (currentPowerValue > maxPowerValue) { // Si se supera el valor máximo de escala de potencia, este se regula.
       currentPowerValue = maxPowerValue;
     }
+    //Serial.println(currentPowerValue);
   } else if (currentPowerValue > maxPowerValue) { // decrementa progresivamente la potencia.
+    //Serial.print("DEC ");
     currentPowerValue = currentPowerValue - POWER_STEPTS[eStorage.powerBrakeMode]; // Desacelera en el step más bajo.
-    if (currentPowerValue < maxPowerValue) { // Si se rebasa el nivel mínimo de escala de potencia, este se regula.
+    /*if (currentPowerValue < maxPowerValue) { // Si se rebasa el nivel mínimo de escala de potencia, este se regula.
       currentPowerValue = maxPowerValue;
+    }*/
+    if (currentAngle<=-10){
+      //currentPowerValue = eStorage.powerMinValue;
+      currentPowerValue = makeDiscount(currentPowerValue,5);
+      currentPowerValue<eStorage.powerMinValue?eStorage.powerMinValue:currentPowerValue;
+    } else if(currentAngle<=-5){
+      currentPowerValue = makeDiscount(currentPowerValue,2);
+      currentPowerValue<eStorage.powerMinAssistenceValue?eStorage.powerMinAssistenceValue:currentPowerValue;
+      //currentPowerValue = eStorage.powerMinAssistenceValue;
     }
+    //Serial.println(currentPowerValue);
   }
 
   if(currentPowerValue < eStorage.powerMinValue){ // Ajusta los mínimos de potencias
@@ -597,11 +609,11 @@ void showMaxPowerScreen() {
 
     oled1306.setCursor(START_LINE, LINE_1);
     oled1306.print(F("> maxPwr: "));
-    oled1306.print(analogInputToVolts(maxPowerValue));
+    oled1306.print(maxPowerValue);
     //oled1306.print(maxPowerValue);
     oled1306.setCursor(START_LINE, LINE_2);
     oled1306.print(F("> curPwr: "));
-    oled1306.print(analogInputToVolts(currentPowerValue));
+    oled1306.print(currentPowerValue);
     //oled1306.print(currentPowerValue);
 
     oled1306.display();
