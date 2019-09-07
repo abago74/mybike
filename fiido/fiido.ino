@@ -1,4 +1,4 @@
-const String VERSION = "V_2.3.2";
+const String VERSION = "V_2.3.3RC";
 const boolean traceOn=false;
 
 #include <EEPROM.h>
@@ -82,13 +82,11 @@ const int MAX_TIME_BETWEEN_GEAR_PLATE_PULSES = 300; // Tiempo mínimo en ms que 
 const byte DEFAULT_MAX_POWER_ANGLE = 30;
 const byte X=0, Y=1, Z=2; // Utilizadas por el método getAxisAngle
 const byte CRASH_ANGLE=50; // Anagulo de control de caida.
-const byte DEFAULT_POWER_BRAKE_DIVIDER = 20; // baja la potencia por frenada en pasos de 20%
+const byte DEFAULT_POWER_BRAKE_DIVIDER = 50; // baja la potencia por frenada en pasos de 20%
 
 // Estructura para almacenar los valores de los modos de control.
 struct EStorage {
   boolean mpuenabled = false;
-  float levelXAngle = LZERO;
-  float levelYAngle = LZERO;
   int XAccelOffset=ZERO;
   int YAccelOffset=ZERO;
   int ZAccelOffset=ZERO;
@@ -332,11 +330,9 @@ float getAxisAngle(int axis) {
   float levelAxisAngle = LZERO;
   switch (axis) {
   case X:
-    levelAxisAngle = eStorage.levelXAngle;
     accel_ang = atan(ax / sqrt(pow(ay, 2) + pow(az, 2))) * (180.0 / 3.14);
     break;
   case Y:
-    levelAxisAngle = eStorage.levelYAngle;
     accel_ang = atan(ay / sqrt(pow(ax, 2) + pow(az, 2))) * (180.0 / 3.14);
     break;
   case Z:
@@ -345,13 +341,6 @@ float getAxisAngle(int axis) {
   default:
     accel_ang = ZERO;
     break;
-  }
-
-  // Recalculamos el ángulo con el desfase de nivel
-  if (levelAxisAngle > ZERO) {
-    accel_ang = accel_ang - levelAxisAngle; // Si hay desfase de ángulo respecto al nivel, nivelamos el valor.
-  } else if (levelAxisAngle < ZERO) {
-    accel_ang = levelAxisAngle + accel_ang;
   }
 
   return accel_ang;
@@ -494,8 +483,6 @@ void initDefaultEepromData() {
   eStorage.powerMode = POWER_STEPTS_DEFAULT_POSITION;
   eStorage.powerBrakeMode = POWER_STEPTS_DEFAULT_POSITION;
   eStorage.maxPowerAngle = DEFAULT_MAX_POWER_ANGLE;
-  eStorage.levelXAngle = LZERO;
-  eStorage.levelYAngle = LZERO;
   eStorage.XAccelOffset=ZERO;
   eStorage.YAccelOffset=ZERO;
   eStorage.ZAccelOffset=ZERO;
@@ -595,10 +582,6 @@ void showEepromDataScreen() {
   if (eStorage.mpuenabled) {
     oled1306.print(F("> mPW:"));
     oled1306.print(eStorage.maxPowerAngle);
-    oled1306.print(F(" X:"));
-    oled1306.print((int)eStorage.levelXAngle);
-    oled1306.print(F(" Y:"));
-    oled1306.print((int)eStorage.levelYAngle);
   } else {
     oled1306.print(F("> mpu DISABLED"));
   }
@@ -684,33 +667,35 @@ int makeDiscount(int value, byte percent){
   return (value * (100.0-percent) / 100);
 }
 
-/*
-  void checkI2cDevices(){
-  byte count = 0;
-  Wire.begin();
-  for (byte i = 8; i < 120; i++)
-  {
-   Wire.beginTransmission (i);
-   if (Wire.endTransmission () == 0){
-     outputMessage = "Found address: ";
-     outputMessage += (i, DEC);
-     outputMessage += " (0x";
-     outputMessage += (i, HEX);
-     outputMessage += ")";
-     Serial.println(outputMessage);
+void checkI2cDevices() {
+  byte error, address;
+  int nDevices;
 
-     count++;
-     delay (1);
-   }
-  }
+  Serial.println("Scanning...");
 
-  outputMessage = "Done.\n";
-  outputMessage += "Found ";
-  outputMessage += (count, DEC);
-  outputMessage += " device(s).";
-  Serial.println(outputMessage);
+  nDevices = 0;
+  for(address = 1; address < 127; address++ ){
+    Wire.beginTransmission(address);
+    error = Wire.endTransmission();
+    if (error == 0) {
+      Serial.print("I2C device found at address 0x");
+      if (address<16) 
+        Serial.print("0");
+        Serial.print(address,HEX);
+        Serial.println("  !");
+        nDevices++;
+    } else if (error==4) {
+      Serial.print("Unknown error at address 0x");
+      if (address<16) 
+        Serial.print("0");
+      Serial.println(address,HEX);
+    }    
   }
-*/
+  if (nDevices == 0)
+    Serial.println("No I2C devices found\n");
+  else
+    Serial.println("done\n");
+}
 
 // SERIAL AT METHODS ***********************************************************************************
 
@@ -804,7 +789,10 @@ void ATCommandsManager() {
 
     } else if (command.indexOf(F("at+shutdown")) > -1) {
       asm volatile ("  jmp 0");
-
+      
+    } else if (command.indexOf(F("at+i2clist")) > -1) {
+      checkI2cDevices();
+      
     } else if (eStorage.mpuenabled) {
 
       if (command.indexOf(F("at+anglemaxpwr")) > -1) { // ángulo para la máxima potencia;
@@ -813,23 +801,9 @@ void ATCommandsManager() {
         oled1306.print(eStorage.maxPowerAngle);
 
       } else if (command.indexOf("at+level") > -1) { // Calibrar posición de placa.
-        int levelCounter = 10;
-        float accel_ang_x, accel_ang_y;
-        while (levelCounter-- > 0) { // tomamos 10 medidas para hacer la meria
-          accel_ang_x = getAxisAngle(X); //accel_ang_x + atan(ax / sqrt(pow(ay, 2) + pow(az, 2))) * (180.0 / 3.14);
-          accel_ang_y = getAxisAngle(Y); //accel_ang_y + atan(ay / sqrt(pow(ax, 2) + pow(az, 2))) * (180.0 / 3.14);
-          delay(100);
-        }
-        
-        eStorage.levelXAngle = (int) accel_ang_x/10;
-        eStorage.levelYAngle = (int) accel_ang_y/10;
-        
-        oled1306.print(F("> [X|Y]: "));
-        oled1306.print(eStorage.levelXAngle);
-        oled1306.print(F(" | "));
-        oled1306.print(eStorage.levelYAngle);
-        oled1306.display();
+        // TODO
       }
+
     }
 
     newSerialDataFlag = false;
