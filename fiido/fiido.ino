@@ -1,5 +1,5 @@
-const String VERSION = "V_2.4.11_1";
-const boolean plotteron=false;
+const String VERSION = "V_2.4.12";
+const boolean plotteron=true;
 const boolean traceOn=!plotteron;
 
 #include <EEPROM.h>
@@ -160,12 +160,16 @@ EStorage eStorage; // Instancia de datos de configuración eeprom
 String messageBuilder; // Variable utilizada para crear mensajes dinámicos.
 
 boolean flaginit=false;
+
+float tmpanglepowermedia;
+
 // init
 void setup() {
 
   // Lee configuración desde la eeprom.
   EEPROM.get(EEPROM_INIT_ADDRESS, eStorage); // Captura los valores desde la eeprom
 
+  tmpanglepowermedia = ((eStorage.powerMaxValue-eStorage.powerMinValue)/30); // Calcula promedio por ángulos
   Serial.begin(SERIAL_PORT); //Inicializa el puesto serie
 
   oled1306.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR); // inicializamos pantalla en dirección i2c
@@ -225,18 +229,18 @@ void setup() {
   showEepromDataScreen();
 
   // Carga el inicializador de configuración manual.
-  //if (digitalRead(BRAKE_IN) == LOW) {
-  //  flaginit=true;
-  //}
+  if (digitalRead(BRAKE_IN) == LOW) {
+    flaginit=true;
+  }
 }
 int cont=0;
 // Main Program
 void loop() {
   
-  //if(flaginit){ // inicializamos dejando pulsado el pin de freno al iniciar. Después contamos los pulsos para detectar que comando mandar.
-  //  initThrotleMinMax();
-  //  flaginit=false;
-  //}else{  
+  if(flaginit){ // inicializamos dejando pulsado el pin de freno al iniciar. Después contamos los pulsos para detectar que comando mandar.
+    initThrotleMinMax();
+    flaginit=false;
+  }else{  
     //serialTraceLn(F("1 loop"));
     changeModeListener(); // Controla powerModeChangeTrigger para cambiar los modos
     currentThrottleValue=analogRead(THROTTLE_IN); // Lee el valor analógico del acelerador. *5/1023 para obtener voltios.
@@ -296,7 +300,12 @@ void loop() {
     
     if(plotteron){
         //plotter/
-        Serial.print((((int) currentAngle)*100)+DEFAULT_POWER_MAX_VALUE+1000);
+        //Serial.print((((int) currentAngle)*100)+DEFAULT_POWER_MAX_VALUE+1000);
+        float t = eStorage.powerMinValue + (currentAngle * tmpanglepowermedia);
+        if( t > eStorage.powerMaxValue )
+        t =eStorage.powerMaxValue;
+        Serial.print((int) t);
+                
         Serial.print("\t");
           
         //plotter
@@ -309,7 +318,7 @@ void loop() {
         
         Serial.println(currentThrottleValue);
     }
-  //}
+  }
 }
 // Interruption Methods ***********************************************************************************
 void gearPlatePulseInt() { // Método que incrementa el contador de pedal en caso de pulso por el pin de interrupcion.
@@ -794,13 +803,14 @@ void initThrotleMinMax(){
     if(cont>1){
       oled1306.setCursor(START_LINE, LINE_2);
       oled1306.print("MID: ");        
-      eStorage.powerMinAssistenceValue=makeDiscount(eStorage.powerMaxValue-eStorage.powerMinValue,20)+eStorage.powerMinValue;
+      eStorage.powerMinAssistenceValue=makeDiscount(eStorage.powerMaxValue-eStorage.powerMinValue,80)+eStorage.powerMinValue;
       oled1306.print(eStorage.powerMinAssistenceValue);
       oled1306.display();
       break;
     }
     
   }
+  blinkLed(STATUS_LED_OUT, 100, 100);
 }
 
 void showThrotleMinMax(){
