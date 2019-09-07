@@ -1,4 +1,4 @@
-const String VERSION = "V_2.4.18";
+const String VERSION = "V_2.4.19RC";
 
 #include <EEPROM.h>
 
@@ -164,8 +164,6 @@ boolean flaginit=false;
 
 float tmpanglepowermedia;
 
-#define max(a,b) ((a)>(b)?(a):(b))
-
 // init
 void setup() {
 
@@ -298,7 +296,7 @@ void loop() {
         maxPowerValue = eStorage.powerMinValue;
       }  
     }
-    updatePower(); // actualizamos la potencia de salida.
+    //updatePower(); // actualizamos la potencia de salida.
     
     if(eStorage.plotterOn){
         
@@ -436,7 +434,7 @@ float DacRangeToVolts(int dacRangeValue){ // 4096 Son los pasos que tiene la sal
 
 int calculateMaxPower() {
   //serialTraceLn(F("6 - calculateMaxPower"));
-
+  
   int mintomax = eStorage.powerMaxValue - eStorage.powerMinValue;
   float mintomaxforangle = 1.0 * mintomax / eStorage.maxPowerAngle;
   
@@ -457,39 +455,28 @@ int calculateMaxPower() {
   serialTrace(F("\ttmpAnglePower: "));
   serialTrace(tmpAnglePower);
 
-  unsigned int gearPlateLastCompleteCicleValueTmp = gearPlateLastCompleteCicleValue <= 60?60:gearPlateLastCompleteCicleValue;
-  gearPlateLastCompleteCicleValueTmp = gearPlateLastCompleteCicleValueTmp >= 200?200 : gearPlateLastCompleteCicleValueTmp;
-  gearPlateLastCompleteCicleValueTmp = 200 - gearPlateLastCompleteCicleValueTmp; // reverse pedal;
-  gearPlateLastCompleteCicleValueTmp = (int) gearPlateLastCompleteCicleValueTmp * 1023.0 / 140;
-  
-  int tmpPedalPower = analogInputRangeToDacRange(gearPlateLastCompleteCicleValueTmp);//(1.0 * (eStorage.powerMaxValue - eStorage.powerMinAssistenceValue) / (PLATE_TIME_SLOW - PLATE_TIME_FAST)) * (eStorage.powerMinAssistenceValue - (gearPlateLastCompleteCicleValueTmp*GEAR_PLATE_PULSES)) + eStorage.powerMinAssistenceValue;
+  int tmpPedalPower = (1.0 * (eStorage.powerMaxValue - eStorage.powerMinAssistenceValue) / (PLATE_TIME_SLOW - PLATE_TIME_FAST)) * (eStorage.powerMinAssistenceValue - (gearPlateLastCompleteCicleValue*GEAR_PLATE_PULSES)) + eStorage.powerMinAssistenceValue;
   if(tmpPedalPower<eStorage.powerMinAssistenceValue)
     tmpPedalPower=eStorage.powerMinAssistenceValue;
   serialTrace(F("\tgearPlateLastCompleteCicleValue: "));
-  serialTrace(gearPlateLastCompleteCicleValueTmp);
+  serialTrace(gearPlateLastCompleteCicleValue);
   serialTrace("\ttmpPedalPower: ");
   serialTrace(tmpPedalPower);
   
   currentThrottleValue= analogInputRangeToDacRange(analogRead(THROTTLE_IN)); // Lee el valor analógico del acelerador.
   serialTrace("\tcurrentThrottleValue: ");
-  serialTrace(currentThrottleValue);
+  serialTraceLn(currentThrottleValue);
   
   // Decidimos cual es la potencia más alta.
-  //maxPowerValueTmp = tmpAnglePower > tmpPedalPower ? tmpAnglePower : tmpPedalPower;
-  //maxPowerValueTmp = (currentPowerValue + maxPowerValueTmp) / 2; //Calculamos la media entre el valor actual y el anterior
-
-  maxPowerValueTmp = max(tmpPedalPower, max(tmpAnglePower,currentThrottleValue));
-
+  maxPowerValueTmp = tmpAnglePower > tmpPedalPower ? tmpAnglePower : tmpPedalPower;
+  maxPowerValueTmp = (currentPowerValue + maxPowerValueTmp) / 2; //Calculamos la media entre el valor actual y el anterior
   // Reajustamos niveles para que se encuentren entre los valores máximos y mínimos permitidos.
   maxPowerValueTmp = maxPowerValueTmp > eStorage.powerMaxValue ? eStorage.powerMaxValue : maxPowerValueTmp;
   maxPowerValueTmp = maxPowerValueTmp < eStorage.powerMinAssistenceValue ? eStorage.powerMinAssistenceValue : maxPowerValueTmp;
 
-  serialTrace("\tmaxPowerValueTmp: ");
-  serialTraceLn(maxPowerValueTmp);
-  
   if(cruisePower > 0 && cruisePower > maxPowerValueTmp) // si el crucero esta activo y la velocidad calculada es menor que la velocidad de crucero la seleccionamos.
-    return cruisePower;
-    
+    maxPowerValueTmp = cruisePower;
+
   return maxPowerValueTmp;
 } 
 
