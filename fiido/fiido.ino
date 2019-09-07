@@ -1,4 +1,4 @@
-const String VERSION = "V_2.4.10";
+const String VERSION = "V_2.4.11";
 const boolean plotteron=false;
 const boolean traceOn=!plotteron;
 
@@ -68,9 +68,9 @@ const int DEBOUNCE_TIMETHRESHOLD_CHANGE_MODE = 1200; // Tiempo de espera entre p
 // ********************** POWER
 
 const int POWER_INPUT_MULTIPLIER = 10; // Máxima potencia del A0 732 - PWM. 4800 -> 3.58v
-const int DEFAULT_POWER_MAX_VALUE = 4800; // Máxima potencia del PWM. 4800 -> 3.58v
-const int DEFAULT_POWER_MIN_ASSISTENCE_VALUE = 2000; // Mínima potencia de asistencia ?.???v
-const int DEFAULT_POWER_MIN_VALUE = 1470; // Mínima potencia del PWM. 1470 -> 1.108v
+const int DEFAULT_POWER_MAX_VALUE = 7320; // Máxima potencia del PWM. 4800 -> 3.58v
+const int DEFAULT_POWER_MIN_ASSISTENCE_VALUE = 4790; // Mínima potencia de asistencia ?.???v
+const int DEFAULT_POWER_MIN_VALUE = 2260; // Mínima potencia del PWM. 1470 -> 1.108v
 
 //const int DEFAULT_POWER_MAX_VALUE = 732*POWER_INPUT_MULTIPLIER; // Máxima potencia del A0 732 - PWM. 4800 -> 3.58v
 //const int DEFAULT_POWER_MIN_VALUE = 226*POWER_INPUT_MULTIPLIER; // Mínima potencia del A0 226 - PWM. 1470 -> 1.108v
@@ -794,7 +794,7 @@ void initThrotleMinMax(){
     if(cont>1){
       oled1306.setCursor(START_LINE, LINE_2);
       oled1306.print("MID: ");        
-      eStorage.powerMinAssistenceValue=((eStorage.powerMaxValue-eStorage.powerMinValue)/2)+eStorage.powerMinValue;
+      eStorage.powerMinAssistenceValue=makeDiscount(eStorage.powerMaxValue-eStorage.powerMinValue,20)+eStorage.powerMinValue;
       oled1306.print(eStorage.powerMinAssistenceValue);
       oled1306.display();
       break;
