@@ -21,7 +21,7 @@
 //si pedaleas 24 pulsos por segundo ponemos la máxima potencia 25km/h.
 //si pedaleas 12 pulsos por minuto asistencia a 15km/h
 
-//V_2.2.0
+//V_2.2.4
 
 // ********************** display
 #define OLED_RESET 4
@@ -146,13 +146,12 @@ void loop() {
   if((digitalRead(BRAKE_IN) == LOW || isCrashDrop()) && powerCurrentValue>POWER_MIN_VALUE){ // Resetea el acelerador si se toca el freno o se está en estado caida y la potencia de acelerador no es la mínima.
       reset(true); // Resetea valores cortando la potencia en modo seguridad
       updatePower();  // Actualizamos potencia de salida.
-
-      printMaxPowerLCD(getAngle(), pulseEnd-pulseInit);
-      
+      printMaxPowerLCD(getAngle(), pulseEnd-pulseInit);      
       blinkLed(STATUS_LED_OUT, 15, 20); // Muestra el testigo de frenado. 300ms
+      fillBrakeCrashIcon();
   }else{
      if(millis()-gearPlateLastPulseTime < MAX_TIME_BETWEEN_GEAR_PLATE_PULSES){ // Si en los ultimos n segundos se ha detectado un pulso de pedaleo
-        //Serial.println("PEDALEANDO");
+        // PEDALEANDO
         fillPedalIcon(WHITE);
         // V En cada ciclo de disco ejecutamos las operaciones necesarias. 
         // V Como calcular la potencia dependiendo de la potencia de pedalada. A esto le añadiremos el control de inclinación cuando esté implementado.
@@ -160,7 +159,7 @@ void loop() {
             calculateMaxPower(pulseEnd-pulseInit, getAngle());
         }
      }else{ // El sensor no detecta pulso de pedaleo. // TODO decrementa progresivamente la pedalada.    
-      //Serial.println("PARADO");
+      // PARADO
       fillPedalIcon(BLACK);
       reset(false); // Resetea valores cortando la potencia en modo progresivo
      }  
@@ -179,6 +178,18 @@ void fillPedalIcon(uint16_t color){
   OLED.display();
 }
 
+void fillBrakeCrashIcon(){
+  int y,x;
+  // Clean display
+  for (y=0; y<=31; y++){
+    for (x=12; x<126; x++){
+      OLED.drawPixel(x, y, BLACK); 
+    }
+  } 
+  OLED.setCursor(45,10);
+  OLED.print("BRAKE!!!");  
+  OLED.display();
+}
 float getAngle(){
    //Calcular los angulos de inclinacion
    float accel_ang_y = atan(ay / sqrt(pow(ax, 2) + pow(az, 2)))*(180.0 / 3.14);
