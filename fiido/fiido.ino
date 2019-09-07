@@ -1,9 +1,4 @@
-const String VERSION = "V_2.2.21";
-
-boolean running = false;
-
-long pulsesCounter=0;
-long plateCounter=0;
+const String VERSION = "V_2.2.23";
 
 #include <EEPROM.h>
 
@@ -210,9 +205,7 @@ void setup() {
 
 // Main Program
 void loop() {
-
   serialTraceLn(F("1 loop"));
-    
   changeModeListener(); // Controla powerModeChangeTrigger para cambiar los modos
   //float throttleValue=analogRead(THROTTLE_IN); // Lee el valor analógico del acelerador
   serialAtCommandListener(); // Lee comandos AT por puerto serie
@@ -229,16 +222,14 @@ void loop() {
   }
 
   if ((digitalRead(BRAKE_IN) == LOW || isCrashDrop()) && currentPowerValue > eStorage.powerMinValue) { // Resetea el acelerador si se toca el freno o se está en estado caida y la potencia de acelerador no es la mínima.
-
     reset(true); // Resetea valores cortando la potencia en modo seguridad
     updatePower();  // Actualizamos potencia de salida.
     showAlertScreen(F(" BRAKE!!!"));
     blinkLed(STATUS_LED_OUT, 10, 10); // Muestra el testigo de frenado. 100ms
     showMaxPowerScreen(pulseEnd - pulseInit);
   } else {
-
     if (millis() - gearPlateLastPulseTime < MAX_TIME_BETWEEN_GEAR_PLATE_PULSES) { // Si en los ultimos n segundos se ha detectado un pulso de pedaleo
-      //Serial.println(F("PEDALEANDO!!!!!"));
+      serialTraceLn(F("PEDALEANDO!!!!!"));
       showPedalIcon(WHITE);
       oled1306.setCursor(110, 20);
       oled1306.print(gearPlatecompleteCicleCounter);
@@ -246,16 +237,14 @@ void loop() {
       
       // V En cada ciclo de disco ejecutamos las operaciones necesarias.
       // V Como calcular la potencia dependiendo de la potencia de pedalada. A esto le añadiremos el control de inclinación cuando esté implementado.
-      //if (completeGearPlateCicle) {
+      if (completeGearPlateCicle) {
         calculateMaxPower(pulseEnd - pulseInit);
-      //}
+      }
     } else { // El sensor no detecta pulso de pedaleo.
-      //Serial.println(F("NO PEDALEANDO!!!!!"));
-      maxPowerValue = eStorage.powerMinValue;
+      serialTraceLn(F("NO PEDALEANDO!!!!!"));
       showPedalIcon(BLACK);
-    //  reset(false); // Resetea valores cortando la potencia en modo progresivo
+      reset(false); // Resetea valores cortando la potencia en modo progresivo
     }
-    
   }
   updatePower(); // actualizamos la potencia de salida.
 }
@@ -430,6 +419,7 @@ void changeModeListener() {
 //***********************************************************************************
 
 void reset(boolean brake) {
+  
     serialTraceLn(F("9 - reset"));
     gearPlateLastPulseTime = 0; // Reiniciamos el tiempo de control de rebote.
     gearPlatecompleteCicleCounter = GEAR_PLATE_PULSES; // Reiniciamos la posición del contador de vueltas de plato.
