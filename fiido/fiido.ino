@@ -1,5 +1,5 @@
-const String VERSION = "V_2.4.4";
-const boolean plotteron = true;
+const String VERSION = "V_2.4.5";
+const boolean plotteron = false;
 const boolean traceOn=false;
 
 #include <EEPROM.h>
@@ -109,6 +109,7 @@ struct EStorage {
   byte powerBrakeDivider = DEFAULT_POWER_BRAKE_DIVIDER;
   
 };
+
 // ------------------------- VARS -------------------------------
 
 // ********************** Serial Input
@@ -146,6 +147,7 @@ byte crashAngleAxis; // Eje que controla el ángulo de control de caida
 EStorage eStorage; // Instancia de datos de configuración eeprom
 String messageBuilder; // Variable utilizada para crear mensajes dinámicos.
 
+boolean flaginit=false;
 // init
 void setup() {
 
@@ -209,83 +211,93 @@ void setup() {
   oled1306.display();
 
   showEepromDataScreen();
-}
 
+  // Carga el inicializador de configuración manual.
+  //if (digitalRead(BRAKE_IN) == LOW) {
+  //  flaginit=true;
+  //}
+}
+int cont=0;
 // Main Program
 void loop() {
-    
-  //serialTraceLn(F("1 loop"));
-  changeModeListener(); // Controla powerModeChangeTrigger para cambiar los modos
-  currentThrottleValue=analogRead(THROTTLE_IN); // Lee el valor analógico del acelerador. *5/1023 para obtener voltios.
-  //Serial.println(currentThrottleValue*5/1023);
-  serialAtCommandListener(); // Lee comandos AT por puerto serie
-  ATCommandsManager(); // Interpreta comandos AT
-
-  if (eStorage.mpuenabled && (millis() - devounceMpuTimeThreshold > DEVOUNCE_MPU_TIME_THRESHOLD_CONST)) { // leemos el valor de inclinación (Y) cada 2 segundos para ayudar a calcular la potencia.
-    currentAngle=getAxisAngle(eStorage.powerAngleAxis);
-    if(eStorage.powerAngleAxisInverter)
-      currentAngle=-currentAngle;
-    devounceMpuTimeThreshold = millis();
-  }
   
-  boolean iscrashdropflag = isCrashDrop();
-  if ((digitalRead(BRAKE_IN) == LOW || iscrashdropflag) && currentPowerValue > eStorage.powerMinValue) { // Resetea el acelerador si se toca el freno o se está en estado caida y la potencia de acelerador no es la mínima.
-    // Resetea valores cortando la potencia en modo seguridad
-    //gearPlatePulseEnd = 0; // Reiniciamos el tiempo de control de rebote.
-    //gearPlatecompleteCicleCounter = GEAR_PLATE_PULSES; // Reiniciamos la posición del contador de vueltas de plato.
-    //gearPlatePulseInit = 0; // Reiniciamos el timer de fin de pedalada.
-    maxPowerValue = eStorage.powerMinValue;
-    if(!iscrashdropflag){
-      if(currentPowerValue > eStorage.powerMinValue){     
-        currentPowerValue = makeDiscount(currentPowerValue,eStorage.powerBrakeDivider); // Decrementa la potencia un x% - si se deja pulsado el freno corta toda la potencia en unos 400ms
-        if(currentPowerValue < eStorage.powerMinValue){currentPowerValue = eStorage.powerMinValue;} 
-      }
-    }else{
-      currentPowerValue = eStorage.powerMinValue;
+  //if(flaginit){ // inicializamos dejando pulsado el pin de freno al iniciar. Después contamos los pulsos para detectar que comando mandar.
+  //  initThrotleMinMax();
+  //  flaginit=false;
+  //}else{  
+    //serialTraceLn(F("1 loop"));
+    changeModeListener(); // Controla powerModeChangeTrigger para cambiar los modos
+    currentThrottleValue=analogRead(THROTTLE_IN); // Lee el valor analógico del acelerador. *5/1023 para obtener voltios.
+    //Serial.println(currentThrottleValue*5/1023);
+    serialAtCommandListener(); // Lee comandos AT por puerto serie
+    ATCommandsManager(); // Interpreta comandos AT
+  
+    if (eStorage.mpuenabled && (millis() - devounceMpuTimeThreshold > DEVOUNCE_MPU_TIME_THRESHOLD_CONST)) { // leemos el valor de inclinación (Y) cada 2 segundos para ayudar a calcular la potencia.
+      currentAngle=getAxisAngle(eStorage.powerAngleAxis);
+      if(eStorage.powerAngleAxisInverter)
+        currentAngle=-currentAngle;
+      devounceMpuTimeThreshold = millis();
     }
-
-    messageBuilder = F(" BRAKE!!! ");
-    messageBuilder = messageBuilder + currentPowerValue;
-    showAlertScreen(messageBuilder);
     
-    blinkLed(STATUS_LED_OUT, 10, 10); // Muestra el testigo de frenado. 100ms
-  } else {
-    if(millis()-gearPlateLastPulseTime<MAX_TIME_BETWEEN_GEAR_PLATE_PULSES){
-      /*
-      serialTrace("PEDALEANDO - ");
-      serialTrace(gearPlateLastCompleteCicleValue);
-      serialTrace(" >>> pwr: ");
-      serialTraceLn(currentPowerValue);
-      */
-      showPedalIcon(WHITE);
-      oled1306.setCursor(110, 20);
-      oled1306.print(gearPlatecompleteCicleCounter);
-      oled1306.display();   
-      maxPowerValue = (maxPowerValue + calculateMaxPower())/2;
-      
-    }else{
-      //serialTrace("."); 
-      showPedalIcon(BLACK);   
+    boolean iscrashdropflag = isCrashDrop();
+    if ((digitalRead(BRAKE_IN) == LOW || iscrashdropflag) && currentPowerValue > eStorage.powerMinValue) { // Resetea el acelerador si se toca el freno o se está en estado caida y la potencia de acelerador no es la mínima.
+      // Resetea valores cortando la potencia en modo seguridad
+      //gearPlatePulseEnd = 0; // Reiniciamos el tiempo de control de rebote.
+      //gearPlatecompleteCicleCounter = GEAR_PLATE_PULSES; // Reiniciamos la posición del contador de vueltas de plato.
+      //gearPlatePulseInit = 0; // Reiniciamos el timer de fin de pedalada.
       maxPowerValue = eStorage.powerMinValue;
-    }  
-  }
-  updatePower(); // actualizamos la potencia de salida.
+      if(!iscrashdropflag){
+        if(currentPowerValue > eStorage.powerMinValue){     
+          currentPowerValue = makeDiscount(currentPowerValue,eStorage.powerBrakeDivider); // Decrementa la potencia un x% - si se deja pulsado el freno corta toda la potencia en unos 400ms
+          if(currentPowerValue < eStorage.powerMinValue){currentPowerValue = eStorage.powerMinValue;} 
+        }
+      }else{
+        currentPowerValue = eStorage.powerMinValue;
+      }
   
-  if(plotteron){
-      //plotter/
-      Serial.print((((int) currentAngle)*100)+DEFAULT_POWER_MAX_VALUE+1000);
-      Serial.print("\t");
+      messageBuilder = F(" BRAKE!!! ");
+      messageBuilder = messageBuilder + currentPowerValue;
+      showAlertScreen(messageBuilder);
+      
+      blinkLed(STATUS_LED_OUT, 10, 10); // Muestra el testigo de frenado. 100ms
+    } else {
+      if(millis()-gearPlateLastPulseTime<MAX_TIME_BETWEEN_GEAR_PLATE_PULSES){
+        /*
+        serialTrace("PEDALEANDO - ");
+        serialTrace(gearPlateLastCompleteCicleValue);
+        serialTrace(" >>> pwr: ");
+        serialTraceLn(currentPowerValue);
+        */
+        showPedalIcon(WHITE);
+        oled1306.setCursor(110, 20);
+        oled1306.print(gearPlatecompleteCicleCounter);
+        oled1306.display();   
+        maxPowerValue = (maxPowerValue + calculateMaxPower())/2;
         
-      //plotter
-      Serial.print(maxPowerValue);
-      Serial.print("\t");
-      
-      //plotter
-      Serial.print(currentPowerValue);
-      Serial.print("\t");
-      
-      Serial.println(currentThrottleValue);
-  }
+      }else{
+        //serialTrace("."); 
+        showPedalIcon(BLACK);   
+        maxPowerValue = eStorage.powerMinValue;
+      }  
+    }
+    updatePower(); // actualizamos la potencia de salida.
+    
+    if(plotteron){
+        //plotter/
+        Serial.print((((int) currentAngle)*100)+DEFAULT_POWER_MAX_VALUE+1000);
+        Serial.print("\t");
+          
+        //plotter
+        Serial.print(maxPowerValue);
+        Serial.print("\t");
+        
+        //plotter
+        Serial.print(currentPowerValue);
+        Serial.print("\t");
+        
+        Serial.println(currentThrottleValue);
+    }
+  //}
 }
 // Interruption Methods ***********************************************************************************
 void gearPlatePulseInt() { // Método que incrementa el contador de pedal en caso de pulso por el pin de interrupcion.
@@ -773,6 +785,9 @@ void ATCommandsManager() {
     } else if (command.indexOf("at+init") > -1) {
       initDefaultEepromData();
 
+    } else if (command.indexOf("at+throtleinit") > -1) {
+      initThrotleMinMax();
+
     } else if (command.indexOf("at+eelist") > -1) {
       //printEeprom();
       showEepromDataScreen();
@@ -829,6 +844,49 @@ void ATCommandsManager() {
   }
 }
 
+void initThrotleMinMax(){
+  oled1306.clearDisplay();
+  oled1306.setCursor(0, 0);
+  oled1306.print("Calibrando acelerador...");
+  oled1306.display();
+  int cont = 0;
+  int initThrotle;
+  int endThrotle;
+
+  while (true){
+    initThrotle = analogRead(THROTTLE_IN);
+    delay(500);
+    endThrotle = analogRead(THROTTLE_IN);
+    if(initThrotle==endThrotle){
+      cont++;
+      if(cont==1){
+        oled1306.setCursor(0, 10);
+        oled1306.print("PMNV: ");
+        oled1306.print(initThrotle);
+        eStorage.powerMinValue=initThrotle;
+        oled1306.print(" > ");
+        oled1306.display();
+        delay(3000);
+      }else if(cont==2){
+        oled1306.print("PMXV: ");
+        oled1306.print(initThrotle);
+        eStorage.powerMaxValue=initThrotle;
+        oled1306.display();
+        
+      }
+    }
+    if(cont>1){
+      oled1306.setCursor(0, 20);
+      oled1306.print("PMDV: ");        
+      eStorage.powerMinAssistenceValue=((eStorage.powerMaxValue-eStorage.powerMinValue)/2)+eStorage.powerMinValue;
+      oled1306.print(eStorage.powerMinAssistenceValue);
+      oled1306.display();
+      break;
+    }
+    
+  }
+}
+  
 String getAtData(String data, char separator, int index) { // Split string and get index data.
   //serialTraceLn(F("21 getAtData"));
   int found = ZERO;
