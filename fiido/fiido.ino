@@ -1,5 +1,5 @@
-const String VERSION = "V_2.4.2";
-const boolean plotteron = true;
+const String VERSION = "V_2.4.3";
+const boolean plotteron = false;
 const boolean traceOn=false;
 
 #include <EEPROM.h>
@@ -130,6 +130,7 @@ unsigned int gearPlateCompleteCicleValue; // Contenedor del valor tomado por una
 // ********************** POWER
 unsigned int maxPowerValue; // Máxima potencia calculada según pedalada y la inclinación.
 unsigned int currentPowerValue; // Potencia actual
+float throttleValue; // Lectura de tensión de acelerador.
 
 // ********************** MODE
 int powerModeChangeTrigger; // Trigger de solicitud de cambio de modo . La variable es cambiada de estado por el método changeModeInt lanzado por la interrupción para detectar el tipo. Valores 0/1/2.
@@ -197,29 +198,25 @@ void setup() {
   devounceMpuTimeThreshold = ZERO; // Tiempo entre las medidas de ángulo
   
   crashAngleAxis=(eStorage.powerAngleAxis == X)?Y:X; // Eje que controla el ángulo de control de caida
-  Serial.print("********");
-  Serial.print(eStorage.powerAngleAxis);
-  Serial.print(" ******** ");
-  Serial.println(crashAngleAxis);
-  
 
   //initFlashLeds(); // Ejecuta los leds de inicio de script. y muestra los modos.
 
   // Definición de interrupciones
-  attachInterrupt(digitalPinToInterrupt(GEAR_PLATE_IN), gearPlatePulseInt, RISING); // Definición de la interrupción para la entrada de pin de pedal.
-  attachInterrupt(digitalPinToInterrupt(MODE_IN), changeModeInt, RISING); // Definición de la interrupción para la entrada de pin de cambio de modo.
+  attachInterrupt(digitalPinToInterrupt(GEAR_PLATE_IN), gearPlatePulseInt, CHANGE); // Definición de la interrupción para la entrada de pin de pedal.
+  attachInterrupt(digitalPinToInterrupt(MODE_IN), changeModeInt, FALLING); // Definición de la interrupción para la entrada de pin de cambio de modo.
   oled1306.print(F(" |"));
   oled1306.display();
 
   showEepromDataScreen();
 }
-
+;
 // Main Program
 void loop() {
     
   //serialTraceLn(F("1 loop"));
   changeModeListener(); // Controla powerModeChangeTrigger para cambiar los modos
-  //float throttleValue=analogRead(THROTTLE_IN); // Lee el valor analógico del acelerador
+  throttleValue=analogRead(THROTTLE_IN); // Lee el valor analógico del acelerador. *5/1023 para obtener voltios.
+  //Serial.println(throttleValue*5/1023);
   serialAtCommandListener(); // Lee comandos AT por puerto serie
   ATCommandsManager(); // Interpreta comandos AT
 
@@ -800,7 +797,7 @@ void ATCommandsManager() {
           oled1306.print(eStorage.maxPowerAngle);
         }
 
-    } else if (command.indexOf("at+angledir") > -1) { // ángulo de control de inclinación;
+    } else if (command.indexOf("at+angledir") > -1) { // ángulo de control de inclinación; // Y X -Y -X // 1 2 -1 -2 // REVISAR N S E O
 
       eStorage.powerAngleAxis=(value<-1)?Y:X;
       eStorage.powerAngleAxisInverter=(value>0);
