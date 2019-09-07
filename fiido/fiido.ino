@@ -704,39 +704,39 @@ void ATCommandsManager() {
     }
     oled1306.setCursor(0, 10);
 
-    if (command.indexOf("at+save") > -1) {
+    if (command.indexOf(F("at+save")) > -1) {
       updateEepromData();
 
-    } else if (command.indexOf("at+init") > -1) {
+    } else if (command.indexOf(F("at+init")) > -1) {
       initDefaultEepromData();
 
-    } else if (command.indexOf("at+eelist") > -1) {
+    } else if (command.indexOf(F("at+eelist")) > -1) {
       //printEeprom();
       showEepromDataScreen();
       
-    } else if (command.indexOf("at+pwrup") > -1) { // modo de incremento de potencia progresiva.
+    } else if (command.indexOf(F("at+pwrup")) > -1) { // modo de incremento de potencia progresiva.
       eStorage.powerMode = (value < (sizeof(POWER_STEPTS) / 2)) ? value : POWER_STEPTS_DEFAULT_POSITION;
       oled1306.print(F("> powerBrakeMode: "));
       oled1306.print(eStorage.powerMode);
 
-    } else if (command.indexOf("at+pwrdw") > -1) { // modo de decremento de potencia progresiva.
+    } else if (command.indexOf(F("at+pwrdw")) > -1) { // modo de decremento de potencia progresiva.
       eStorage.powerBrakeMode = (value < (sizeof(POWER_STEPTS) / 2)) ? value : POWER_STEPTS_DEFAULT_POSITION;
       oled1306.print(F("> powerBrakeMode: "));
       oled1306.print(eStorage.powerBrakeMode);
 
-    } else if (command.indexOf("at+mpuon") > -1) {
+    } else if (command.indexOf(F("at+mpuon")) > -1) {
       eStorage.mpuenabled = true;
 
-    } else if (command.indexOf("at+mpuoff") > -1) {
+    } else if (command.indexOf(F("at+mpuoff")) > -1) {
       eStorage.mpuenabled = false;
       ax = 0; ay = 0; az = 1;
 
-    } else if (command.indexOf("at+shutdown") > -1) {
+    } else if (command.indexOf(F("at+shutdown")) > -1) {
       asm volatile ("  jmp 0");
 
     } else if (eStorage.mpuenabled) {
 
-      if (command.indexOf("at+anglemaxpwr") > -1) { // ángulo para la máxima potencia;
+      if (command.indexOf(F("at+anglemaxpwr")) > -1) { // ángulo para la máxima potencia;
         eStorage.maxPowerAngle = value < DEFAULT_MAX_POWER_ANGLE ? value : DEFAULT_MAX_POWER_ANGLE;
         oled1306.print(F("> maxPowerAngle: "));
         oled1306.print(eStorage.maxPowerAngle);
@@ -764,7 +764,7 @@ String getAtData(String data, char separator, int index) { // Split string and g
   int strIndex[] = {0, -1};
   int maxIndex = data.length() - 1;
 
-  for (int i = 0; i <= maxIndex && found <= index; i++) {
+  for (byte i = 0; i <= maxIndex && found <= index; i++) {
     if (data.charAt(i) == separator || i == maxIndex) {
       found++;
       strIndex[0] = strIndex[1] + 1;
