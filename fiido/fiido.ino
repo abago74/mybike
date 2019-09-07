@@ -1,9 +1,15 @@
 #include <EEPROM.h>
 #include "I2Cdev.h"
-#include "MPU6050.h"
 #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
   #include "Wire.h"
 #endif
+#include "MPU6050.h"
+//--#include "Adafruit_SSD1306.h"
+//--#include "Adafruit_GFX.h"
+
+#define MPU_ADDRESS 0x68  // Dirección de memória del acelerómetro - Puede ser 0x68 o 0x69 segín el dispositivo.
+#define OLED_ADDR   0x3C   // Dirección de memória del display
+//--Adafruit_SSD1306 display(-1); 
 
 // notas 
 //<= 10º MIN_POWER
@@ -16,7 +22,7 @@
 //si pedaleas 24 pulsos por segundo ponemos la máxima potencia 25km/h.
 //si pedaleas 12 pulsos por minuto asistencia a 15km/h
 
-//V_2.0.19
+//V_2.1.8
 
 // ********************** Pins
 // > Inputs
@@ -28,7 +34,6 @@ const int POWER_OUT = 11; // Pin de potencia de salida.
 const int STATUS_LED_OUT = 13; // Pin de visualización de selección de modo
 
 // ********************** Def Consts
-const boolean LOGGER = true;
 
 const int SERIAL_PORT = 9600; // Configuración de baudios del puerto serie.
 
@@ -38,21 +43,26 @@ const int MIN_PLATE_TIME_SLOW = 2000; // Tiempo que se tarda en dar una vuelta d
 const int MAX_PLATE_TIME_FAST = 600; // Tiempo que se tarda en dar una vuelta de plato
 
 const int POWER_MAX_VALUE = 4800; // Máxima potencia del PWM. 4800 -> 3.58v
-const int POWER_MIN_ASSISTENCE_VALUE = 2000; // Mínima potencia del PWM. 1470 -> 1.108v
-const int POWER_MIN_VALUE = 1; // Mínima potencia del PWM. 1470 -> 1.108v
+const int POWER_MIN_ASSISTENCE_VALUE = 2000; // Mínima potencia de asistencia ?.???v
+const int POWER_MIN_VALUE = 1470; // Mínima potencia del PWM. 1470 -> 1.108v
 
 const int POWER_STEPTS[] = {1, 2, 5, 10, 25, 50}; // Incremento de potencia de la salida PWM por cada paso.
-const int POWER_STEPTS_DEFAULT_VALUE = 2; 
+const int POWER_STEPTS_DEFAULT_POSITION = 2; // El rango (2)=5 es el valor por defecto
 
 const int MAX_TIME_BETWEEN_GEAR_PLATE_PULSES = 1000; // Tiempo mínimo en ms que se tiene que estar pedaleando para empezar a recibir potencia.
 
 const int DEBOUNCE_TIMETHRESHOLD_GEAR_PLATE = 50; // Tiempo de espera entre pulsos de interrupcion 49ms entre pulsación. 100 Pedaladas(GEAR_PLATE_PULSES*100=1200) por minuto (20 pulsos por segundo). 50ms de debounce para detectar el máximo de 20 pulsos por segundo.
-const int DEBOUNCE_TIMETHRESHOLD_CHANGE_MODE = 600; // Tiempo de espera entre pulsos de interrupcion 600ms entre pulsación
+const int DEBOUNCE_TIMETHRESHOLD_CHANGE_MODE = 1200; // Tiempo de espera entre pulsos de interrupcion 1200ms entre pulsación
 
 const int EEPROM_INIT_ADDRESS=0; // Posición de memoria que almacena los datos de modo.
-const int MPU_ADDRESS = 0x68;  // Dirección de memória del acelerómetro - Puede ser 0x68 o 0x69 segín el dispositivo.
 
-const int MAX_POWER_ANGLE = 30;
+const int DEFAULT_MAX_POWER_ANGLE = 30;
+
+// Serial Input 
+const byte serialBufferSize = 32;
+char receivedChars[serialBufferSize]; // an array to store the received data
+boolean newSerialData = false;
+
 
 // ********************** Control de rebote de pulsos 
 unsigned long debounceLastGearPlatePulseTime; // Almacena el millis() en el que se tomo medida del pulso anterior del sensor de pedalada para controlar el debounce.
@@ -71,13 +81,17 @@ int maxPowerValue; // Máxima potencia calculada según pedalada y la inclinaci�
 
 // ********************** Variables de control de cambio de modo. + EEPROM
 int powerModeChangeTrigger; // Trigger de solicitud de cambio de modo . La variable es cambiada de estado por el método changeModeInt lanzado por la interrupción para detectar el tipo. Valores 0/1/2.
+
 // Estructura para almacenar los valores de los modos de control.
 struct EStorage{
-  int powerMode;
-  int powerBrakeMode;
+  int powerMode=POWER_STEPTS_DEFAULT_POSITION;
+  int powerBrakeMode=POWER_STEPTS_DEFAULT_POSITION;
+  int maxPowerAngle=DEFAULT_MAX_POWER_ANGLE;
+  int levelXAngle=0;
+  int levelYAngle=0;
 };
+
 EStorage eStorage; // Instancia Variable de control de modos.
-boolean eStorageUpdate = false; // Flag solicitud de almacenamiendo de modos en la eeprom.
 
 // ********************** Variables de control de Acelerómetro MPU6050 
 boolean mpuenabled=true;
@@ -87,9 +101,38 @@ int16_t gx, gy, gz; // Variables de control de Giroscopio xyz
 
 String outputMessage="";
 
+int currentPowerByAngle=POWER_MIN_VALUE;
+int currentPowerByPedal=POWER_MIN_VALUE;
+
+// Control de inicialización de datos de eeprom
+
+int initDefaultEepromDataFlag=-1; //Contador de ciclos pendientes de paso para lanzar el proceso de inicialización.
+long initDefaultEepromDataTimer; // Timer para controlar los pulsos necesarios para inicializar la eeprom.
+int initDefaultEepromDataStatus; // almacena el estado de freno en cada ciclo
+
 // main
 void loop() {
-  changeModeFuncion(); // Controla powerModeChangeTrigger para cambiar los modos y almacenar los nuevos valores en la eeprom
+  if((millis()-initDefaultEepromDataTimer) < 10000 && initDefaultEepromDataFlag>=0){
+    delay(500);
+    if(initDefaultEepromDataFlag==0){
+      initDefaultEepromDataFlag--;
+      initDefaultEepromData();
+    }else{
+      int currentvalue = digitalRead(BRAKE_IN);
+      if(currentvalue != initDefaultEepromDataStatus){
+        Serial.print(initDefaultEepromDataFlag);
+        Serial.print("_");
+        initDefaultEepromDataStatus=currentvalue;
+        initDefaultEepromDataFlag--;      
+      }
+    }   
+  }  
+
+
+  serialRcvATCommandWithEndMarker(); // Lee comandos AT por puerto serie
+  manageATCommands(); // Interpreta comandos AT
+  
+  changeModeFuncion(); // Controla powerModeChangeTrigger para cambiar los modos
 
   if(mpuenabled){
     mpu6050.getAcceleration(&ax, &ay, &az); // Lee los datos del acelerómetro.
@@ -120,7 +163,7 @@ void loop() {
      }  
   }
   updatePower(); // actualizamos la potencia de salida.
-  showStatus(); // Muestra el led de estado y guarda valores en la eeprom
+  //showStatus(); // Muestra el led de estado
 }
 
 float getAngle(){
@@ -140,39 +183,48 @@ boolean isCrashDrop(){ // Si El acelerómetro detecta que la bicicleta ha caido 
 }
 
 void calculateMaxPower(int timeCicle, float angle){
-  int maxPowerValueTmp = 0;
-  int pedalPowerValueTmp = 0;
-  
-  int currentAngle = (int) angle; // Valor entero del ángulo de inclinación
-  
-  if(currentAngle>MAX_POWER_ANGLE){ // Si el ángulo es mayor de 30º
-    maxPowerValueTmp = POWER_MAX_VALUE; // Setea el máximo valor de potencia
-  }else{ // Si el ángulo es menor de 30º calcula la potencia dependiendo del rango del ángulo.
-    float min_assistence_range = ((1.0*POWER_MAX_VALUE)/POWER_MIN_ASSISTENCE_VALUE)/MAX_POWER_ANGLE; // Calculamos la fracción del ángulo     
-    maxPowerValueTmp = min_assistence_range*currentAngle*POWER_MIN_ASSISTENCE_VALUE; // Calculamos el valor máximo de potencia
-    pedalPowerValueTmp = ((POWER_MAX_VALUE-POWER_MIN_ASSISTENCE_VALUE)/(MIN_PLATE_TIME_SLOW-MAX_PLATE_TIME_FAST))*(POWER_MIN_ASSISTENCE_VALUE-timeCicle)+POWER_MIN_ASSISTENCE_VALUE;    
-  }
+    // Calcula la potencia dependiendo del ángulo y realiza la media entre el valor actual y el anterior;
+    float min_assistence_range = ((1.0*POWER_MAX_VALUE)/POWER_MIN_ASSISTENCE_VALUE)/eStorage.maxPowerAngle; // Calculamos la fracción del ángulo   
+    int currentAngle = (int) angle;  
+    //int tmpAnglePower = min_assistence_range*currentAngle*POWER_MIN_ASSISTENCE_VALUE; // Calculamos el valor máximo de potencia según el ángulo
+    
+    int lvlAngle = currentAngle; // Calcula el ángulo real del acelerómetro
+    if(eStorage.levelYAngle>0){
+      lvlAngle = currentAngle - eStorage.levelYAngle; // Si hay desfase de ángulo respecto al nivel, nivelamos el valor. 
+    }else if(eStorage.levelYAngle<0){
+      lvlAngle = eStorage.levelYAngle + currentAngle;
+    }
+    lvlAngle = lvlAngle<0?0:lvlAngle; // Si el ángulo es negativo, lo ponemos a 0 para utilizar la mínima asistencia.    
+    Serial.println(lvlAngle);
+    
+    int tmpAnglePower = min_assistence_range*lvlAngle*POWER_MIN_ASSISTENCE_VALUE; // Calculamos el valor máximo de potencia según el ángulo adaptado a nivel
+    currentPowerByAngle = (currentPowerByAngle + tmpAnglePower)/2; //Calculamos la media entre el valor actual y el anterior
+//currentPowerByAngle = currentPowerByAngle>POWER_MAX_VALUE?POWER_MAX_VALUE:currentPowerByAngle;
+//currentPowerByAngle = currentPowerByAngle<POWER_MIN_ASSISTENCE_VALUE?POWER_MIN_ASSISTENCE_VALUE:currentPowerByAngle;
 
-  //maxPowerValue = pedalPowerValueTmp>maxPowerValueTmp?pedalPowerValueTmp:maxPowerValueTmp;
-  maxPowerValue = (maxPowerValue + (pedalPowerValueTmp>maxPowerValueTmp?pedalPowerValueTmp:maxPowerValueTmp))/2; // Calculamos la media de la potencia anterior y la potencia actual. Proceso para controlar cambios bruscos en las medidas.
-  
-  if(maxPowerValue<POWER_MIN_ASSISTENCE_VALUE){ // Si máximo valor de potencia es menor que el mímimo, seteamos el valor mínimo de referencia,
-    maxPowerValue = POWER_MIN_ASSISTENCE_VALUE;
-  }else if(maxPowerValue>POWER_MAX_VALUE){
-    maxPowerValue = POWER_MAX_VALUE;
-  }
-  
-  outputMessage = F("\tInclinacion en eje Y:");
-  outputMessage += angle;
-  outputMessage += "\tPULSO :";
-  outputMessage += timeCicle;
-  outputMessage += "\tmaxPowerValue :";
-  outputMessage += maxPowerValue;
-  outputMessage += "\tpowerCurrentValue :";
-  outputMessage += powerCurrentValue;
-  Serial.println(outputMessage);
-  
-  completeGearPlateCicle=false; // Reseteamos ciclo de plato.
+    // Calcula la potencia en base a la pedalada
+    int tmpPedalPower = ((POWER_MAX_VALUE-POWER_MIN_ASSISTENCE_VALUE)/(MIN_PLATE_TIME_SLOW-MAX_PLATE_TIME_FAST))*(POWER_MIN_ASSISTENCE_VALUE-timeCicle)+POWER_MIN_ASSISTENCE_VALUE;
+    currentPowerByPedal = (currentPowerByPedal + tmpPedalPower) / 2;
+//currentPowerByPedal = currentPowerByPedal>POWER_MAX_VALUE?POWER_MAX_VALUE:currentPowerByPedal;
+//currentPowerByPedal = currentPowerByPedal<POWER_MIN_ASSISTENCE_VALUE?POWER_MIN_ASSISTENCE_VALUE:currentPowerByPedal;
+
+    // Decidimos cual es la potencia más alta y ajusta mínimos y máximos.
+    maxPowerValue = currentPowerByAngle>currentPowerByPedal?currentPowerByAngle:currentPowerByPedal;
+    maxPowerValue = maxPowerValue>POWER_MAX_VALUE?POWER_MAX_VALUE:maxPowerValue;
+    maxPowerValue = maxPowerValue<POWER_MIN_ASSISTENCE_VALUE?POWER_MIN_ASSISTENCE_VALUE:maxPowerValue;
+ 
+    
+    outputMessage = F("\tInclinacion en eje Y:");
+    outputMessage += angle;
+    outputMessage += "\tPULSO :";
+    outputMessage += timeCicle;
+    outputMessage += "\tmaxPowerValue :";
+    outputMessage += maxPowerValue;
+    outputMessage += "\tpowerCurrentValue :";
+    outputMessage += powerCurrentValue;
+    Serial.println(outputMessage);
+    
+    completeGearPlateCicle=false; // Reseteamos ciclo de plato.
 }
 
 void updatePower(){
@@ -187,10 +239,11 @@ void updatePower(){
           powerCurrentValue = maxPowerValue;
         }
       }
-      //if(powerCurrentValue < maxPowerValue && powerCurrentValue > POWER_MIN_VALUE){
-      //  Serial.print("PWR-> ");
-      //  Serial.println(powerCurrentValue);
-      //}
+      
+      if(millis()-gearPlateLastPulseTime > MAX_TIME_BETWEEN_GEAR_PLATE_PULSES && powerCurrentValue > POWER_MIN_VALUE){ 
+        Serial.print("PWR-- -> ");
+        Serial.println(powerCurrentValue);
+      }
       analogWrite(POWER_OUT, powerCurrentValue/20); // Actualiza la salida con la potencia de acelerador.
 }
 
@@ -239,7 +292,6 @@ void changeModeInt(){
 
 void changeModeFuncion(){
   if(powerModeChangeTrigger == 1){
-    eStorageUpdate=true;
     powerModeChangeTrigger = 0;
     if(eStorage.powerMode < (sizeof(POWER_STEPTS) / sizeof(int)-1)){
       eStorage.powerMode++;
@@ -256,7 +308,6 @@ void changeModeFuncion(){
     blinkLed(STATUS_LED_OUT, eStorage.powerMode+1, (600/(eStorage.powerMode+1)));
     powerCurrentValue=POWER_MIN_VALUE; 
   }else if(powerModeChangeTrigger == 2){
-    eStorageUpdate=true; //habilita el flag de actualización de eeprom.
     powerModeChangeTrigger = 0;
     if(eStorage.powerBrakeMode < (sizeof(POWER_STEPTS)/sizeof(int)-1)){
       eStorage.powerBrakeMode++;
@@ -275,29 +326,17 @@ void changeModeFuncion(){
   }  
 }
 
-void showStatus(){ // Muestra el led de estado y guarda valores en la eeprom
-  if(powerCurrentValue > ((maxPowerValue-POWER_MIN_VALUE)*0.8) && powerCurrentValue > POWER_MIN_VALUE){ //Enciende status de potencia cuando el acelerador está superando el 80X% 
+/*
+void showStatus(){ // Muestra el led de estado
+  if(powerCurrentValue > maxPowerValue*0.8 && powerCurrentValue > POWER_MIN_VALUE){
+//  if(powerCurrentValue-POWER_MIN_VALUE > ((maxPowerValue)*0.8) && powerCurrentValue > POWER_MIN_VALUE){ //Enciende status de potencia cuando el acelerador está superando el 80% 
     digitalWrite(STATUS_LED_OUT, HIGH);
-    if(eStorageUpdate==true){
-      updateEepromPowerModeStatus(); // Guardamos los datos de modos en la eeprom.
-    }
   }else{
     digitalWrite(STATUS_LED_OUT, LOW);
   }  
 }
+*/
 
-void updateEepromPowerModeStatus(){  
-    eStorageUpdate=false; // Anulamos el guardado de valores 
-
-    outputMessage = "Update eeprom: [powerMode: ";
-    outputMessage += eStorage.powerMode;
-    outputMessage += "| powerBrakeMode: ";
-    outputMessage += eStorage.powerBrakeMode;
-    outputMessage += "]";
-    Serial.println(outputMessage);    
-    // TODO - HABILITAR PARA GRABAR EN ENTORNO DE PRODUCCIÓN 
-    //EEPROM.put(EEPROM_INIT_ADDRESS, eStorage); // Actualizan los datos de modos entrega de potencia en la eeprom
-}
 
 void reset(boolean brake){
       gearPlateLastPulseTime=0; // Reiniciamos el tiempo de control de rebote.
@@ -309,14 +348,24 @@ void reset(boolean brake){
         powerCurrentValue=POWER_MIN_VALUE;
       }   
 }
+
+void printEeprom(){
+  outputMessage = "\n\t > powerMode: ";
+  outputMessage += eStorage.powerMode;
+  outputMessage += "\n\t > powerBrakeMode: ";
+  outputMessage += eStorage.powerBrakeMode;
+  outputMessage += "\n\t > maxPowerAngle: ";
+  outputMessage += eStorage.maxPowerAngle;
+  outputMessage += "\n\t > level[X|Y]Angle: X:";
+  outputMessage += eStorage.levelXAngle;
+  outputMessage += " Y:";
+  outputMessage += eStorage.levelYAngle;
+  Serial.println(outputMessage);
+}
 // init
 void setup() {
 
-    if(LOGGER==true){
-      Serial.begin(SERIAL_PORT); //Inicializa el puesto serie para sacar datos por consola.
-    }
-
-
+    Serial.begin(SERIAL_PORT); //Inicializa el puesto serie
     outputMessage = " | Fiido D1|D2 asistence project | \n";
     outputMessage += "***********************************\n";
     Serial.println(outputMessage);
@@ -337,16 +386,10 @@ void setup() {
       ax=0; ay=0; az=1;
     }
 
-    // Inicializa valores de modos.
-    eStorage.powerMode=POWER_STEPTS_DEFAULT_VALUE;
-    eStorage.powerBrakeMode=POWER_STEPTS_DEFAULT_VALUE;
+    // Lee configuración desde la eeprom.
     EEPROM.get(EEPROM_INIT_ADDRESS, eStorage); // Captura los valores desde la eeprom
-
-    outputMessage = " > powerMode: ";
-    outputMessage += eStorage.powerMode;
-    outputMessage += "\t > powerBrakeMode: ";
-    outputMessage += eStorage.powerBrakeMode;
-    Serial.println(outputMessage);
+    Serial.println(" > Reading Eeprom: ");
+    printEeprom();
 
     //Inicializamos los pines
     pinMode(LED_BUILTIN,OUTPUT); // Salida led modo/estado. //STATUS_LED_OUT
@@ -361,7 +404,7 @@ void setup() {
     gearPlateLastPulseTime = 0; // Inicializamos el timer de último pulso de pedaleo.
     gearPlatecompleteCicleCounter = GEAR_PLATE_PULSES; // Inicializamos el contador de pulsos para controlar el ciclo de pedalada. cada n pulsos se calculará el tiempo que se ha tardado en dar una vuelta al disco.
 
-    initFlashLeds(); // Ejecuta los leds de inicio de script. y muestra los modos.
+    //initFlashLeds(); // Ejecuta los leds de inicio de script. y muestra los modos.
    
     // Definición de interrupciones 
     attachInterrupt(digitalPinToInterrupt(GEAR_PLATE_IN), gearPlatePulseInt, RISING); // Definición de la interrupción para la entrada de pin de pedal.
@@ -371,6 +414,15 @@ void setup() {
     outputMessage += " > Init Done!!!\n";
     outputMessage += "***********************************";
     Serial.println(outputMessage);
+
+    // Activamos el modo de reseteo de datos de la eeprom desde el pedal de freno. se precisa realizar cambios de estado en el freno durante 10 segundos.
+    if(digitalRead(BRAKE_IN) == LOW){
+      Serial.print(" > Waiting code for init config...\t");
+      initDefaultEepromDataFlag=6;
+      initDefaultEepromDataTimer=millis();
+    }
+
+    //initDisplay();
 }
 
 // init methods
@@ -386,6 +438,143 @@ void initFlashLeds(){
     Serial.println(".");
 }
 
+// Serial inputs methods
+void serialRcvATCommandWithEndMarker() { // Espera un comando AT con un buffer de hasta serialBufferSize (32)
+  static byte ndx = 0;
+  char endMarker = '\n';
+  char rc;
+    while (Serial.available() > 0 && newSerialData == false) {
+      rc = Serial.read();
+      if (rc != endMarker) {
+        receivedChars[ndx] = rc;
+        ndx++;
+        if (ndx >= serialBufferSize) {
+          ndx = serialBufferSize - 1;
+        }
+      } else {
+          receivedChars[ndx] = '\0'; // terminate the string
+          ndx = 0;
+          String receivedCharsStr=receivedChars;
+          if(receivedCharsStr.startsWith("at") || receivedCharsStr.startsWith("AT")){
+            newSerialData = true;
+          }
+      }
+    }
+}
+
+
+/*
+AT Commands
+> at+save
+> at+init
+> at+pwdup=[0-5]
+> at+pwddw=[0-5]
+> at+anglemaxpwr=[< 30]
+*/
+void manageATCommands() {
+
+  if (newSerialData == true) {
+
+    blinkLed(STATUS_LED_OUT, 1, 500);
+    String command = getValue(receivedChars, '=' , 0);
+    command.toLowerCase();
+    int value = getValue(receivedChars, '=' , 1).toInt();
+    
+    outputMessage = "> command: ";
+    outputMessage += command;    
+    outputMessage += "\tvalue: ";
+    outputMessage += value;
+    Serial.println(outputMessage);
+    
+    if(command.indexOf("at+save")>-1){
+      updateEepromData();
+      
+    } else if(command.indexOf("at+init")>-1){
+      initDefaultEepromData();
+
+    } else if(command.indexOf("at+eelist")>-1){
+      printEeprom();
+      
+    } else if(command.indexOf("at+pwrup")>-1){ // modo de incremento de potencia progresiva.
+      eStorage.powerMode=(value<(sizeof(POWER_STEPTS)/2))?value:POWER_STEPTS_DEFAULT_POSITION;      
+      outputMessage = "update eStorage.powerBrakeMode: ";
+      outputMessage += eStorage.powerMode;
+      Serial.println(outputMessage);
+ 
+    } else if(command.indexOf("at+pwrdw")>-1){ // modo de decremento de potencia progresiva.
+      eStorage.powerBrakeMode=(value<(sizeof(POWER_STEPTS)/2))?value:POWER_STEPTS_DEFAULT_POSITION;
+      outputMessage = "update eStorage.powerBrakeMode: ";
+      outputMessage += eStorage.powerBrakeMode;
+      Serial.println(outputMessage);
+
+    } else if(command.indexOf("at+anglemaxpwr")>-1){ // ángulo para la máxima potencia;
+      eStorage.maxPowerAngle=value<DEFAULT_MAX_POWER_ANGLE?value:DEFAULT_MAX_POWER_ANGLE;
+      outputMessage = "update eStorage.maxPowerAngle: ";
+      outputMessage += eStorage.maxPowerAngle;
+      Serial.println(outputMessage);
+      
+    } else if(command.indexOf("at+level")>-1){ // Calibrar posición de placa.
+      float accel_ang_x = atan(ax / sqrt(pow(ay, 2) + pow(az, 2)))*(180.0 / 3.14);
+      float accel_ang_y = atan(ay / sqrt(pow(ax, 2) + pow(az, 2)))*(180.0 / 3.14);
+      eStorage.levelXAngle = (int) accel_ang_x;
+      eStorage.levelYAngle = (int) accel_ang_y;
+      outputMessage = "update eStorage.level [X|Y] Angle: X:";
+      outputMessage += eStorage.levelXAngle;
+      outputMessage += " Y:";
+      outputMessage += eStorage.levelYAngle;
+      Serial.println(outputMessage);
+    }
+    newSerialData = false;
+    blinkLed(STATUS_LED_OUT, 15, 30);
+  }
+}
+
+String getValue(String data, char separator, int index) { // Split string and get index data.
+  int found = 0;
+  int strIndex[] = {0, -1};
+  int maxIndex = data.length()-1;
+
+  for(int i=0; i<=maxIndex && found<=index; i++){
+    if(data.charAt(i)==separator || i==maxIndex){
+        found++;
+        strIndex[0] = strIndex[1]+1;
+        strIndex[1] = (i == maxIndex) ? i+1 : i;
+    }
+  }
+  return found>index ? data.substring(strIndex[0], strIndex[1]) : "";
+}
+
+void initDefaultEepromData(){
+  Serial.println("\n > Initializing default config...");
+  blinkLed(STATUS_LED_OUT, 150, 3);
+  eStorage.powerMode=POWER_STEPTS_DEFAULT_POSITION;;
+  eStorage.powerBrakeMode=POWER_STEPTS_DEFAULT_POSITION;
+  eStorage.maxPowerAngle=DEFAULT_MAX_POWER_ANGLE;
+  eStorage.levelXAngle=0;
+  eStorage.levelYAngle=0;
+  updateEepromData();
+  blinkLed(STATUS_LED_OUT, 15, 20);
+}
+
+void updateEepromData(){  
+    outputMessage = " > Updating eeprom... ";
+    outputMessage += "\n\t > powerMode: ";
+    outputMessage += eStorage.powerMode;
+    outputMessage += "\n\t > powerBrakeMode: ";
+    outputMessage += eStorage.powerBrakeMode;
+    outputMessage += "\n\t > maxPowerAngle: ";
+    outputMessage += eStorage.maxPowerAngle;
+
+    outputMessage += "\n\t > level [X|Y] Angle: X:";
+    outputMessage += eStorage.levelXAngle;
+    outputMessage += " Y:";
+    outputMessage += eStorage.levelYAngle;
+
+    outputMessage += "\n\n***********************************";
+    Serial.println(outputMessage);    
+    EEPROM.put(EEPROM_INIT_ADDRESS, eStorage); // Actualizan los datos de modos entrega de potencia en la eeprom
+}
+
 void runDelay(int dlay){ // Ejecuta un delay y sacamos puntos por la consola.
   int repeat = dlay/100;
   for(int i=0; i <= repeat; i++){
@@ -395,15 +584,41 @@ void runDelay(int dlay){ // Ejecuta un delay y sacamos puntos por la consola.
 }
 
 void blinkLed(int ledPin, int repeats, int time){ // Ejecuta un parpadeo en el led durante x repeticiones y con una frecuencia de x_ms.
-  for (int i = 0; i < repeats; i++)
-  {
+  for (int i = 0; i < repeats; i++) {
     digitalWrite(ledPin, HIGH);
     delay(time);
     digitalWrite(ledPin, LOW);
     delay(time);
   }
 }
+/*
+// screen methods
+void initDisplay(){
+// initialize and clear display
+  display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR);
+  display.clearDisplay();
+  display.display();
 
+  // display a pixel in each corner of the screen
+  display.drawPixel(0, 0, WHITE);
+  display.drawPixel(127, 0, WHITE);
+  display.drawPixel(0, 63, WHITE);
+  display.drawPixel(127, 63, WHITE);
+
+  // display a line of text
+  display.setTextSize(1);
+  display.setTextColor(WHITE);
+  display.setCursor(27,30);
+  display.print("FIIDO ASSISTANCE");
+
+  // update display with all of the above graphics
+  display.display();
+}
+
+*/
+
+
+/*
 void checkI2cDevices(){
   byte count = 0; 
   Wire.begin();
@@ -429,3 +644,4 @@ void checkI2cDevices(){
   outputMessage += " device(s).";
   Serial.println(outputMessage);
 }
+*/
