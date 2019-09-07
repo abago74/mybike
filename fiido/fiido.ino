@@ -1,4 +1,4 @@
-const String VERSION = "V_2.2.19";
+const String VERSION = "V_2.2.20";
 
 #include <EEPROM.h>
 
@@ -67,15 +67,13 @@ const byte POWER_STEPTS_DEFAULT_POSITION = 2; // El rango (2)=8 es el valor por 
 
 const int MAX_TIME_BETWEEN_GEAR_PLATE_PULSES = 500; // Tiempo mínimo en ms que se tiene que estar pedaleando para empezar a recibir potencia.
 
-const int DEBOUNCE_TIMETHRESHOLD_GEAR_PLATE = 50; // Tiempo de espera entre pulsos de interrupcion 49ms entre pulsación. 100 Pedaladas(GEAR_PLATE_PULSES*100=1200) por minuto (20 pulsos por segundo). 50ms de debounce para detectar el máximo de 20 pulsos por segundo.
+const byte DEBOUNCE_TIMETHRESHOLD_GEAR_PLATE = 50; // Tiempo de espera entre pulsos de interrupcion 49ms entre pulsación. 100 Pedaladas(GEAR_PLATE_PULSES*100=1200) por minuto (20 pulsos por segundo). 50ms de debounce para detectar el máximo de 20 pulsos por segundo.
 const int DEBOUNCE_TIMETHRESHOLD_CHANGE_MODE = 1200; // Tiempo de espera entre pulsos de interrupcion 1200ms entre pulsación
 
 const byte EEPROM_INIT_ADDRESS = 0; // Posición de memoria que almacena los datos de modo.
 
 const byte DEFAULT_MAX_POWER_ANGLE = 30;
-const byte X=0;
-const byte Y=1;
-const byte Z=2;
+const byte X=0, Y=1, Z=2;
 const byte CRASH_ANGLE=50;
 
 // Serial Input
@@ -104,15 +102,17 @@ int powerModeChangeTrigger; // Trigger de solicitud de cambio de modo . La varia
 
 // Estructura para almacenar los valores de los modos de control.
 struct EStorage {
-  byte powerMode = POWER_STEPTS_DEFAULT_POSITION;
-  byte powerBrakeMode = POWER_STEPTS_DEFAULT_POSITION;
-  byte maxPowerAngle = DEFAULT_MAX_POWER_ANGLE;
+  boolean mpuenabled = false;
   byte levelXAngle = 0;
   byte levelYAngle = 0;
-  boolean mpuenabled = false;
+
+  byte powerMode = POWER_STEPTS_DEFAULT_POSITION;
+  byte powerBrakeMode = POWER_STEPTS_DEFAULT_POSITION;
   int powerMaxValue = DEFAULT_POWER_MAX_VALUE;
   int powerMinAssistenceValue = DEFAULT_POWER_MIN_ASSISTENCE_VALUE;
   int powerMinValue = DEFAULT_POWER_MIN_VALUE;
+  
+  byte maxPowerAngle = DEFAULT_MAX_POWER_ANGLE;
 };
 
 EStorage eStorage; // Instancia Variable de control de modos.
@@ -129,14 +129,6 @@ int16_t ax, ay, az; // Variables de control de Acelerómetro xyz
 
 int currentPowerByAngle;
 int currentPowerByPedal;
-
-// Control de inicialización de datos de eeprom
-
-int initDefaultEepromDataFlag = -1; //Contador de ciclos pendientes de paso para lanzar el proceso de inicialización.
-long initDefaultEepromDataTimer; // Timer para controlar los pulsos necesarios para inicializar la eeprom.
-byte initDefaultEepromDataStatus; // almacena el estado de freno en cada ciclo
-
-//String outputMessage = "";
 
 // init
 void setup() {
@@ -199,6 +191,7 @@ void setup() {
   oled1306.print(F(" > PINS"));
   oled1306.display();
 
+/*
   // Activamos el modo de reseteo de datos de la eeprom desde el pedal de freno. se precisa realizar cambios de estado en el freno durante 10 segundos.
   if (digitalRead(BRAKE_IN) == LOW) {
     oled1306.setCursor(10, 0);
@@ -208,7 +201,7 @@ void setup() {
     initDefaultEepromDataFlag = 6;
     initDefaultEepromDataTimer = millis();
   }
-
+*/
   showEepromDataScreen();
   powerModeChangeTrigger = 0; // Init changeModeTrigger Flag.
 }
@@ -216,7 +209,7 @@ void setup() {
 // Main Program
 void loop() {
   //delay(10);
-  hardwareConfigResetListener(); // Si detecta el freno pulsado al inicio, entra en modo inicialización por defecto.
+  //hardwareConfigResetListener(); // Si detecta el freno pulsado al inicio, entra en modo inicialización por defecto.
   changeModeListener(); // Controla powerModeChangeTrigger para cambiar los modos
   //float throttleValue=analogRead(THROTTLE_IN); // Lee el valor analógico del acelerador
   serialAtCommandListener(); // Lee comandos AT por puerto serie
@@ -236,7 +229,7 @@ void loop() {
     reset(true); // Resetea valores cortando la potencia en modo seguridad
     updatePower();  // Actualizamos potencia de salida.
     showAlertScreen(F("BRAKE!!!"));
-    blinkLed(STATUS_LED_OUT, 15, 20); // Muestra el testigo de frenado. 300ms
+    blinkLed(STATUS_LED_OUT, 10, 10); // Muestra el testigo de frenado. 300ms
     showMaxPowerScreen(pulseEnd - pulseInit);
   } else {
     if (millis() - gearPlateLastPulseTime < MAX_TIME_BETWEEN_GEAR_PLATE_PULSES) { // Si en los ultimos n segundos se ha detectado un pulso de pedaleo
@@ -395,6 +388,11 @@ void updatePower() {
 }
 
 // Listeners Methods ***********************************************************************************
+/*
+long initDefaultEepromDataTimer; // Timer para controlar los pulsos necesarios para inicializar la eeprom.
+byte initDefaultEepromDataStatus; // almacena el estado de freno en cada ciclo
+int initDefaultEepromDataFlag = -1; //Contador de ciclos pendientes de paso para lanzar el proceso de inicialización.
+
 void hardwareConfigResetListener(){
   if (initDefaultEepromDataFlag >= 0 && (millis() - initDefaultEepromDataTimer) < 10000) {
     delay(100);
@@ -412,6 +410,7 @@ void hardwareConfigResetListener(){
     }
   }  
 }
+*/
 
 void changeModeListener() {
   if (powerModeChangeTrigger == 1) {
@@ -447,7 +446,11 @@ void reset(boolean brake) {
   pulseInit = 0; // Reiniciamos el timer de fin de pedalada.
   maxPowerValue = eStorage.powerMinValue;
   if (brake) {
-    currentPowerValue = eStorage.powerMinValue;
+    if(currentPowerValue > eStorage.powerMinAssistenceValue){
+      currentPowerValue = eStorage.powerMinAssistenceValue;
+    }else{
+      currentPowerValue = eStorage.powerMinValue;
+    }
   }
 }
 
@@ -481,9 +484,8 @@ void updateEepromData() {
 // SCREEN METHODS ***********************************************************************************
 
 void showPedalIcon(uint16_t color) {
-  int y, x;
-  for (y = 27; y <= 31; y++) {
-    for (x = 122; x < 126; x++) {
+  for (byte y = 27; y <= 31; y++) {
+    for (byte x = 122; x < 126; x++) {
       oled1306.drawPixel(x, y, color);
     }
   }
@@ -491,10 +493,9 @@ void showPedalIcon(uint16_t color) {
 }
 
 void cleanDisplay(){
-  int y, x;
   // Clean display
-  for (y = 0; y <= 31; y++) {
-    for (x = 12; x < 126; x++) {
+  for (byte y = 0; y <= 31; y++) {
+    for (byte x = 12; x < 126; x++) {
       oled1306.drawPixel(x, y, BLACK);
     }
   }
