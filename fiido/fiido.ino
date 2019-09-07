@@ -1,4 +1,4 @@
-const String VERSION = "V_2.4.13RC";
+const String VERSION = "V_2.4.14";
 const boolean plotteron=true;
 const boolean traceOn=!plotteron;
 
@@ -408,7 +408,7 @@ boolean isCrashDrop() { // Si El acelerómetro detecta que la bicicleta ha caido
 }
 
 // POWER METHODS ***********************************************************************************
-
+/*
 float analogInputToVolts(int inputValue){ // 1023 son los pasos que lee la entrada analógica
   return inputValue*5/1023;
 }
@@ -420,6 +420,11 @@ int analogInputToDac(int inputValue){ // 4096 Son los pasos que tiene la salida 
 
 int getpwm(int inputValue){ // 240 -> 3,58V | 73 -> 1.108V
   return (inputValue / ( (eStorage.powerMaxValue-eStorage.powerMinValue) / 1023) ) * ( (240-73) / 1023);
+}
+*/
+int analogInputRangeToDacRange(int inputRangeValue){ // 4096 Son los pasos que tiene la salida del DAC
+  // inputRangeValue -> convert to volts -> convert volts to dat range
+  return (int) (1.0 * inputRangeValue) * (5.0 / 1023) * (4096 / 5);;
 }
 
 int calculateMaxPower() {
@@ -501,11 +506,11 @@ void updatePower() {
   showMaxPowerScreen();
 
   // DAC DEPENDIENDO DE TENSIÓN EN VOLTIOS
-  uint32_t valor=(4096/5)*currentThrottleValue;
-  dac4725.setVoltage(valor, false); // fija voltaje en DAC
+  int ctv = analogInputRangeToDacRange(currentThrottleValue);
+  dac4725.setVoltage(ctv, false); // fija voltaje en DAC
   // DAC - Convertir currentPowerValue a valor
   //dac4725.setVoltage(currentPowerValue, false); // Actualiza la salida con la potencia de acelerador por medio del DAC. // retocar rango de valores ya que el dac va de 0 a 4096 (0 - 5V)
-  analogWrite(POWER_OUT, currentPowerValue / 20); // Actualiza la salida con la potencia de acelerador por medio del PWM.
+  //analogWrite(POWER_OUT, currentPowerValue / 20); // Actualiza la salida con la potencia de acelerador por medio del PWM.
 }
 
 // Listeners Methods ***********************************************************************************
