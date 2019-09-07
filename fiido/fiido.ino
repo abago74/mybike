@@ -1,4 +1,6 @@
-const String VERSION = "V_2.4.21";
+const String VERSION = "V_2.4.15";
+const boolean plotteron=true;
+const boolean traceOn=!plotteron;
 
 #include <EEPROM.h>
 
@@ -75,12 +77,12 @@ const int DEFAULT_POWER_MIN_VALUE = 2260; // Mínima potencia del PWM. 1470 -> 1
 //const int DEFAULT_POWER_MIN_ASSISTENCE_VALUE = DEFAULT_POWER_MIN_VALUE + ((DEFAULT_POWER_MAX_VALUE-DEFAULT_POWER_MIN_VALUE)/2); // Mínima potencia de asistencia ?.???v
 
 
-const int POWER_STEPTS[] = {2, 4, 8, 16, 32, 64, 128, 256, 512}; // Incremento de potencia de la salida POWER por cada paso.
+const int POWER_STEPTS[] = {2, 4, 8, 16, 32, 64, 128}; // Incremento de potencia de la salida POWER por cada paso.
 const byte POWER_STEPTS_DEFAULT_POSITION = 3; // El rango (3)=16 es el valor por defecto
 const byte UNDEFINED_CHANGE_MODE = 0, POWER_CHANGE_MODE = 1, POWERBRAKE_CHANGE_MODE = 2;
 
 // ********************** PAS PLATE
-const byte GEAR_PLATE_PULSES = 3; // Pulsos proporcionados por el plato en cada vuelta. 10+ en el caso de la fiido
+const byte GEAR_PLATE_PULSES = 10; // Pulsos proporcionados por el plato en cada vuelta. 10+ en el caso de la fiido
 const int PLATE_TIME_FAST = 600; // Tiempo que se tarda en dar una vuelta de plato
 const int PLATE_TIME_SLOW = 2000; // Tiempo que se tarda en dar una vuelta de plato
 const int MAX_TIME_BETWEEN_GEAR_PLATE_PULSES = 300; // Tiempo mínimo en ms que se tiene que estar pedaleando para empezar a recibir potencia.
@@ -117,13 +119,8 @@ struct EStorage {
 
   byte maxPowerAngle = DEFAULT_MAX_POWER_ANGLE;
   byte powerBrakeDivider = DEFAULT_POWER_BRAKE_DIVIDER;
-
-  boolean plotterOn=false;
-  boolean traceOn=false;
   
 };
-
-#define max(a,b) ((a)>(b)?(a):(b))
 
 // ------------------------- VARS -------------------------------
 
@@ -146,7 +143,7 @@ unsigned int gearPlateCompleteCicleValue; // Contenedor del valor tomado por una
 // ********************** POWER
 unsigned int maxPowerValue; // Máxima potencia calculada según pedalada y la inclinación.
 unsigned int currentPowerValue; // Potencia actual
-int currentThrottleValue; // Lectura de tensión de acelerador.
+float currentThrottleValue; // Lectura de tensión de acelerador.
 unsigned int cruisePower;
 
 // ********************** MODE
@@ -164,15 +161,13 @@ String messageBuilder; // Variable utilizada para crear mensajes dinámicos.
 
 boolean flaginit=false;
 
-float tmpanglepowermedia; // TODO REMOVE IF NOT NEEDED
+float tmpanglepowermedia;
 
 // init
 void setup() {
 
   // Lee configuración desde la eeprom.
   EEPROM.get(EEPROM_INIT_ADDRESS, eStorage); // Captura los valores desde la eeprom
-
-  dac4725.begin(DAC_ADDR); // Inicializa el DAC
 
   tmpanglepowermedia = ((eStorage.powerMaxValue-eStorage.powerMinValue)/DEFAULT_MAX_POWER_ANGLE); // Calcula promedio por ángulos
   Serial.begin(SERIAL_PORT); //Inicializa el puesto serie
@@ -198,6 +193,9 @@ void setup() {
     oled1306.print(F(" - MPU"));
   }
 
+  dac4725.begin(DAC_ADDR); // Inicializa el DAC
+  oled1306.print(F(" > +DAC"));
+
   //Inicializamos los pines
   pinMode(LED_BUILTIN, OUTPUT); // Salida led modo/estado. //STATUS_LED_OUT
   pinMode(POWER_OUT, OUTPUT); // Salida PWM acelerador variable.
@@ -217,7 +215,7 @@ void setup() {
   powerModeChangeTrigger = ZERO;
   currentAngle = LZERO;
   devounceMpuTimeThreshold = ZERO; // Tiempo entre las medidas de ángulo
-  cruisePower=0; // Desactivamos la potencia de crucero. 
+  cruisePower=4000;
   crashAngleAxis=(eStorage.powerAngleAxis == X)?Y:X; // Eje que controla el ángulo de control de caida
 
   //initFlashLeds(); // Ejecuta los leds de inicio de script. y muestra los modos.
@@ -236,7 +234,6 @@ void setup() {
   }
 }
 int cont=0;
-int count=0;
 // Main Program
 void loop() {
   
@@ -246,7 +243,10 @@ void loop() {
   }else{  
     //serialTraceLn(F("1 loop"));
     changeModeListener(); // Controla powerModeChangeTrigger para cambiar los modos
+    currentThrottleValue=analogRead(THROTTLE_IN); // Lee el valor analógico del acelerador. *5/1023 para obtener voltios.
+    //Serial.println(currentThrottleValue*5/1023);
     serialAtCommandListener(); // Lee comandos AT por puerto serie
+    ATCommandsManager(); // Interpreta comandos AT
   
     if (eStorage.mpuenabled && (millis() - devounceMpuTimeThreshold > DEVOUNCE_MPU_TIME_THRESHOLD_CONST)) { // leemos el valor de inclinación (Y) cada 2 segundos para ayudar a calcular la potencia.
       currentAngle=getAxisAngle(eStorage.powerAngleAxis);
@@ -287,14 +287,8 @@ void loop() {
         showPedalIcon(WHITE);
         oled1306.setCursor(110, LINE_2);
         oled1306.print(gearPlatecompleteCicleCounter);
-        oled1306.display();  
-        //leemos el acelerador y si es mayor que la potencia mínima......
-        int tmppower = analogInputRangeToDacRange(analogRead(THROTTLE_IN));
-        if(tmppower > eStorage.powerMinValue){
-            maxPowerValue = tmppower; // Lee el valor analógico del acelerador.
-        }else{
-          maxPowerValue = calculateMaxPower();
-        } 
+        oled1306.display();   
+        maxPowerValue = (maxPowerValue + calculateMaxPower())/2;
         
       }else{
         //serialTrace("."); 
@@ -303,16 +297,15 @@ void loop() {
       }  
     }
     updatePower(); // actualizamos la potencia de salida.
-    showMaxPowerScreen();
     
-    if(eStorage.plotterOn){
-        
+    if(plotteron){
         //plotter/
         //Serial.print((((int) currentAngle)*100)+DEFAULT_POWER_MAX_VALUE+1000);
         float t = eStorage.powerMinValue + (currentAngle * tmpanglepowermedia);
         if( t > eStorage.powerMaxValue )
         t =eStorage.powerMaxValue;
         Serial.print((int) t);
+                
         Serial.print("\t");
           
         //plotter
@@ -338,15 +331,13 @@ void gearPlatePulseInt() { // Método que incrementa el contador de pedal en cas
       gearPlateCurrentPulseValue = MAX_TIME_BETWEEN_GEAR_PLATE_PULSES;
       gearPlatecompleteCicleCounter = GEAR_PLATE_PULSES; //Reiniciamos pulsos de plato
     }
+    //serialTrace(gearPlatecompleteCicleCounter);
+    //serialTrace(" --->>> pedal : ");
+    //serialTraceLn(gearPlateCurrentPulseValue);
     
-    if (gearPlatecompleteCicleCounter >= 1) { // Iteramos los pulsos del plato para detectar el inicio y el fin vuelta.
+    if (gearPlatecompleteCicleCounter > 1) { // Iteramos los pulsos del plato para detectar el inicio y el fin vuelta.
       gearPlatecompleteCicleCounter--;
       gearPlateCompleteCicleValue +=gearPlateCurrentPulseValue;
-
-      //serialTrace(gearPlatecompleteCicleCounter);
-      //serialTrace(" --->>> pedal : ");
-      //serialTraceLn(gearPlateCurrentPulseValue);
-      
     } else {
       //serialTrace(" --->>> full : ");
       gearPlateLastCompleteCicleValue=gearPlateCompleteCicleValue/GEAR_PLATE_PULSES;
@@ -431,111 +422,45 @@ int getpwm(int inputValue){ // 240 -> 3,58V | 73 -> 1.108V
   return (inputValue / ( (eStorage.powerMaxValue-eStorage.powerMinValue) / 1023) ) * ( (240-73) / 1023);
 }
 */
-
 int analogInputRangeToDacRange(int inputRangeValue){ // 4096 Son los pasos que tiene la salida del DAC
   // inputRangeValue -> convert to volts -> convert volts to dat range
   return (int) (1.0 * inputRangeValue) * (5.0 / 1023) * (4096 / 5);;
-}
-
-float DacRangeToVolts(int dacRangeValue){ // 4096 Son los pasos que tiene la salida del DAC  
-  return dacRangeValue * 5.0 / 4096; 
 }
 
 int calculateMaxPower() {
   //serialTraceLn(F("6 - calculateMaxPower"));
 
   int maxPowerValueTmp;
-
   
-  int mintomax = eStorage.powerMaxValue - eStorage.powerMinValue;
-  float mintomaxforangle = 1.0 * mintomax / eStorage.maxPowerAngle;
+  int currentAngleTmp = (byte) currentAngle>0?currentAngle:0; // Si el ángulo es negativo, lo ponemos a 0 para utilizar la mínima asistencia.
+  //serialTraceLn(currentAngleTmp);
+//  serialTrace(" > currentAngleTmp: ");
+//  serialTrace(currentAngleTmp);
+//  serialTrace(" | ");
+
+
+  float angleAssistanceFraction = ((1.0 * eStorage.powerMaxValue) / eStorage.powerMinAssistenceValue) / eStorage.maxPowerAngle; // Calculamos la fracción del ángulo
+//  serialTrace("angleAssistanceFraction: ");
+//  serialTrace(angleAssistanceFraction);
+//  serialTrace(" | ");
   
-
-
-  
-  byte currentAngleTmp = (int) currentAngle <= 0 ? 0 : currentAngle; // Si el ángulo es negativo, lo ponemos a 0 para utilizar la mínima asistencia.
-  currentAngleTmp = currentAngleTmp >= eStorage.maxPowerAngle?eStorage.maxPowerAngle:currentAngleTmp; // Si el ángulo es mayor de 30 nivela a máximo.
-  
-  serialTrace(" > currentAngleTmp: ");
-  serialTrace(currentAngle);
-  serialTrace(F("º - "));
-  serialTrace(currentAngleTmp);
-  serialTrace(F("º\t"));
-
-  unsigned int gearPlateLastCompleteCicleValueTmp = gearPlateLastCompleteCicleValue <= 60?60:gearPlateLastCompleteCicleValue;
-  gearPlateLastCompleteCicleValueTmp = gearPlateLastCompleteCicleValueTmp >= 200?200 : gearPlateLastCompleteCicleValueTmp;
-  gearPlateLastCompleteCicleValueTmp = 200 - gearPlateLastCompleteCicleValueTmp; // reverse pedal;
-  gearPlateLastCompleteCicleValueTmp = (int) gearPlateLastCompleteCicleValueTmp * 1023.0 / 140;
-  serialTrace(F(" gearPlateLastCompleteCicleValue: "));
-  serialTrace(gearPlateLastCompleteCicleValueTmp);
-
-  int tmpPedalPower = analogInputRangeToDacRange(gearPlateLastCompleteCicleValueTmp);//(1.0 * (eStorage.powerMaxValue - eStorage.powerMinAssistenceValue) / (PLATE_TIME_SLOW - PLATE_TIME_FAST)) * (eStorage.powerMinAssistenceValue - (gearPlateLastCompleteCicleValueTmp*GEAR_PLATE_PULSES)) + eStorage.powerMinAssistenceValue;
-  if(tmpPedalPower<eStorage.powerMinAssistenceValue)
-    tmpPedalPower=eStorage.powerMinAssistenceValue;
-  serialTrace("\ttmpPedalPower: ");
-  serialTrace(tmpPedalPower);
-
- // Calculamos el valor máximo de potencia según el ángulo adaptado a nivel
-  int tmpAnglePower = eStorage.powerMinValue + ((int) (mintomaxforangle * currentAngleTmp));
-  serialTrace(F("\ttmpAnglePower: "));
-  serialTrace(tmpAnglePower);
-
-  //currentThrottleValue= analogInputRangeToDacRange(analogRead(THROTTLE_IN)); // Lee el valor analógico del acelerador.
-  //serialTrace("\tcurrentThrottleValue: ");
-  //serialTrace(currentThrottleValue);
-  
-  // Decidimos cual es la potencia más alta.
-  //maxPowerValueTmp = max(tmpPedalPower, max(tmpAnglePower,currentThrottleValue));
-  maxPowerValueTmp = max(tmpPedalPower, tmpAnglePower);
-
-  // Reajustamos niveles para que se encuentren entre los valores máximos y mínimos permitidos.
-  maxPowerValueTmp = maxPowerValueTmp > eStorage.powerMaxValue ? eStorage.powerMaxValue : maxPowerValueTmp;
-  maxPowerValueTmp = maxPowerValueTmp < eStorage.powerMinAssistenceValue ? eStorage.powerMinAssistenceValue : maxPowerValueTmp;
-
-  serialTrace("\tmaxPowerValueTmp: ");
-  serialTraceLn(maxPowerValueTmp);
-  
-  //if(cruisePower > 0 && cruisePower > maxPowerValueTmp) // si el crucero esta activo y la velocidad calculada es menor que la velocidad de crucero la seleccionamos.
-  //  return cruisePower;
-    
-  return maxPowerValueTmp;
-} 
-
-/*
-int calculateMaxPowerold() {
-  //serialTraceLn(F("6 - calculateMaxPower"));
-  
-  int mintomax = eStorage.powerMaxValue - eStorage.powerMinValue;
-  float mintomaxforangle = 1.0 * mintomax / eStorage.maxPowerAngle;
-  
-
-  int maxPowerValueTmp;
-  
-  byte currentAngleTmp = (int) currentAngle <= 0 ? 0 : currentAngle; // Si el ángulo es negativo, lo ponemos a 0 para utilizar la mínima asistencia.
-  currentAngleTmp = currentAngleTmp >= eStorage.maxPowerAngle?eStorage.maxPowerAngle:currentAngleTmp; // Si el ángulo es mayor de 30 nivela a máximo.
-  
-  serialTrace(" > currentAngleTmp: ");
-  serialTrace(currentAngle);
-  serialTrace(F("º\t"));
-  serialTrace(currentAngleTmp);
-  serialTrace(F("º\t"));
-
   // Calculamos el valor máximo de potencia según el ángulo adaptado a nivel
-  int tmpAnglePower = eStorage.powerMinValue + ((int) (mintomaxforangle * currentAngleTmp));
-  serialTrace(F("\ttmpAnglePower: "));
-  serialTrace(tmpAnglePower);
+  int tmpAnglePower = angleAssistanceFraction * currentAngleTmp * eStorage.powerMinAssistenceValue;
+//  serialTrace("tmpAnglePower: ");
+//  serialTrace(tmpAnglePower);
+//  serialTrace(" | ");
 
   int tmpPedalPower = (1.0 * (eStorage.powerMaxValue - eStorage.powerMinAssistenceValue) / (PLATE_TIME_SLOW - PLATE_TIME_FAST)) * (eStorage.powerMinAssistenceValue - (gearPlateLastCompleteCicleValue*GEAR_PLATE_PULSES)) + eStorage.powerMinAssistenceValue;
   if(tmpPedalPower<eStorage.powerMinAssistenceValue)
     tmpPedalPower=eStorage.powerMinAssistenceValue;
-  serialTrace(F("\tgearPlateLastCompleteCicleValue: "));
-  serialTrace(gearPlateLastCompleteCicleValue);
-  serialTrace("\ttmpPedalPower: ");
-  serialTrace(tmpPedalPower);
+  /*serialTrace("gearPlateCompleteCicleTime: ");
+  serialTrace(gearPlateCompleteCicleTime);
+  serialTrace(" | tmppedalvalue: ");
+  serialTraceLn(tmppedalvalue);*/
   
-  currentThrottleValue= analogInputRangeToDacRange(analogRead(THROTTLE_IN)); // Lee el valor analógico del acelerador.
-  serialTrace("\tcurrentThrottleValue: ");
-  serialTraceLn(currentThrottleValue);
+  if(cruisePower>tmpPedalPower) // si el crucero es mayor que la pedalada usamos en crucero.
+    tmpPedalPower = cruisePower;
+  
   
   // Decidimos cual es la potencia más alta.
   maxPowerValueTmp = tmpAnglePower > tmpPedalPower ? tmpAnglePower : tmpPedalPower;
@@ -543,13 +468,9 @@ int calculateMaxPowerold() {
   // Reajustamos niveles para que se encuentren entre los valores máximos y mínimos permitidos.
   maxPowerValueTmp = maxPowerValueTmp > eStorage.powerMaxValue ? eStorage.powerMaxValue : maxPowerValueTmp;
   maxPowerValueTmp = maxPowerValueTmp < eStorage.powerMinAssistenceValue ? eStorage.powerMinAssistenceValue : maxPowerValueTmp;
-
-  if(cruisePower > 0 && cruisePower > maxPowerValueTmp) // si el crucero esta activo y la velocidad calculada es menor que la velocidad de crucero la seleccionamos.
-    maxPowerValueTmp = cruisePower;
-
+  
   return maxPowerValueTmp;
 } 
-*/
 
 void updatePower() {
   //serialTraceLn(F("7 - updatePower"));
@@ -562,7 +483,7 @@ void updatePower() {
       //Si el ángulo es menos a -5º anula la potencia
       currentPowerValue=(eStorage.powerMinAssistenceValue+eStorage.powerMinValue)/2; // aplicamos una pequeña potencia sacada de la media del valor mínimo de asistencia y el valor mínimo.
       maxPowerValue=currentPowerValue;
-    } else { // Si el ángulo es mayor de -5º incrementamos la potencia prograsivamente.
+    } else { // Si el ángulo es mayor de -10º incrementamos la potencia prograsivamente.
       currentPowerValue = currentPowerValue + POWER_STEPTS[eStorage.powerMode];
       if (currentPowerValue > maxPowerValue) { // Si se supera el valor máximo de escala de potencia, este se regula.
         currentPowerValue = maxPowerValue;
@@ -582,11 +503,11 @@ void updatePower() {
     currentPowerValue = eStorage.powerMaxValue;
   }
 
-  dac4725.setVoltage(currentPowerValue, false); // fija voltaje en DAC
-  
+  showMaxPowerScreen();
+
   // DAC DEPENDIENDO DE TENSIÓN EN VOLTIOS
-  //int ctv = analogInputRangeToDacRange(currentThrottleValue);
-  //dac4725.setVoltage(ctv, false); // fija voltaje en DAC
+  int ctv = analogInputRangeToDacRange(currentThrottleValue);
+  dac4725.setVoltage(ctv, false); // fija voltaje en DAC
   // DAC - Convertir currentPowerValue a valor
   //dac4725.setVoltage(currentPowerValue, false); // Actualiza la salida con la potencia de acelerador por medio del DAC. // retocar rango de valores ya que el dac va de 0 a 4096 (0 - 5V)
   //analogWrite(POWER_OUT, currentPowerValue / 20); // Actualiza la salida con la potencia de acelerador por medio del PWM.
@@ -695,8 +616,8 @@ void showAlertScreen(String message) {
 void showMaxPowerScreen() {
   //serialTraceLn(F("15 showMaxPowerScreen"));
   if (currentPowerValue > eStorage.powerMinValue && currentPowerValue < eStorage.powerMaxValue) {  // Solo se muestra si se está pedaleando o si la potencia no es la mínima
-    float coutput = DacRangeToVolts(maxPowerValue);
-    float coutput1 = DacRangeToVolts(currentPowerValue);
+    float coutput = ((float)(maxPowerValue * 3.58) / DEFAULT_POWER_MAX_VALUE);
+    float coutput1 = ((float)(currentPowerValue * 3.58) / DEFAULT_POWER_MAX_VALUE);
 
     oled1306.clearDisplay();
     oled1306.setCursor(START_LINE, LINE_0);
@@ -704,23 +625,26 @@ void showMaxPowerScreen() {
     oled1306.print(currentAngle);
     oled1306.print(F(" PLSE:"));
     if(millis()-gearPlateLastPulseTime<MAX_TIME_BETWEEN_GEAR_PLATE_PULSES)
-      oled1306.print(gearPlateLastCompleteCicleValue);
+      oled1306.print(gearPlateLastCompleteCicleValue*GEAR_PLATE_PULSES);
     else
       oled1306.print(F("???"));
 
     oled1306.setCursor(START_LINE, LINE_1);
     oled1306.print(F("> maxPwr: "));
     oled1306.print(coutput);
+    //oled1306.print(maxPowerValue);
     oled1306.setCursor(START_LINE, LINE_2);
     oled1306.print(F("> curPwr: "));
     oled1306.print(coutput1);
+    //oled1306.print(currentPowerValue);
+
     oled1306.display();
   }
 }
 
 void showEepromDataScreen() {
   //serialTraceLn(F("16 showEepromDataScreen"));
-  //oled1306.clearDisplay();
+  oled1306.clearDisplay();
   oled1306.setCursor(START_LINE, LINE_1);
   oled1306.print(F("> pwr M|BM|BD: "));
   oled1306.print(eStorage.powerMode);
@@ -752,7 +676,7 @@ void showHomeScreen() {
   oled1306.print(F("FIIDO ASSISTANCE"));
   oled1306.setCursor(40, LINE_1);
   oled1306.print(F("PROJECT"));
-  oled1306.setCursor(124 - (VERSION.length()*6), LINE_2);
+  oled1306.setCursor(70, LINE_2);
   oled1306.print(VERSION);
   oled1306.display();
   oled1306.setCursor(90, LINE_1);
@@ -807,6 +731,18 @@ void blinkLed(byte ledPin, byte repeats, int time) { // Ejecuta un parpadeo en e
   }
 }
 
+template<class T>
+void serialTrace(T message){
+  if(traceOn)
+    Serial.print(message);
+}
+
+template<class T>
+void serialTraceLn(T message){
+  if(traceOn)
+    Serial.println(message);
+}
+
 int makeDiscount(int value, byte percent){
   return (value * (100.0-percent) / 100);
 }
@@ -849,43 +785,39 @@ void initThrotleMinMax(){
   int endThrotle;
 
   while (true){
-    initThrotle = analogRead(THROTTLE_IN);
+    initThrotle = analogRead(THROTTLE_IN)*POWER_INPUT_MULTIPLIER;
     delay(100);
-    endThrotle = analogRead(THROTTLE_IN);
+    endThrotle = analogRead(THROTTLE_IN)*POWER_INPUT_MULTIPLIER;
     if(initThrotle==endThrotle){
       cont++;
       if(cont==1){
         oled1306.setCursor(START_LINE, LINE_1);
-        oled1306.print("MIN: "); // Min value
-        eStorage.powerMinValue=analogInputRangeToDacRange(initThrotle);
-        dac4725.setVoltage(eStorage.powerMinValue, true); // Seteamos el dac al mínimo y guardamos el valor en la eeprom
-        oled1306.print(eStorage.powerMinValue);
+        oled1306.print("MN: "); // Min value
+        oled1306.print(initThrotle);
+        eStorage.powerMinValue=initThrotle;
         oled1306.print(" > ");
         oled1306.display();
-        oled1306.print("MAX: "); // Max value
+        oled1306.print("MX: "); // Max value
         delay(2000);
       } else if(cont==2){
-        eStorage.powerMaxValue=analogInputRangeToDacRange(initThrotle);
-        oled1306.print(eStorage.powerMaxValue);
+        oled1306.print(initThrotle);
+        eStorage.powerMaxValue=initThrotle;
         oled1306.display();
         oled1306.setCursor(START_LINE, LINE_2);
-        oled1306.print("MED: "); // Min assitence value
-        int dif = eStorage.powerMaxValue-eStorage.powerMinValue;
-        int discount = makeDiscount(dif,80);
-        int v = ((int) discount)+eStorage.powerMinValue;
-        eStorage.powerMinAssistenceValue=v;
+        oled1306.print("MA: "); // Min assitence value       
+        eStorage.powerMinAssistenceValue=makeDiscount(eStorage.powerMaxValue-eStorage.powerMinValue,80)+eStorage.powerMinValue;
         oled1306.print(eStorage.powerMinAssistenceValue);
         oled1306.display();
         break;
       }
     }
   }
-  
-  blinkLed(STATUS_LED_OUT, 30, 10);
+
+  showThrotleMinMax();
   EEPROM.put(EEPROM_INIT_ADDRESS, eStorage);
+  blinkLed(STATUS_LED_OUT, 30, 10);
   showThrotleMinMax();
   blinkLed(STATUS_LED_OUT, 30, 100);
-  
 }
 
 void showThrotleMinMax(){
@@ -925,7 +857,6 @@ void serialAtCommandListener() { // Espera un comando AT con un buffer de hasta 
       }
     }
   }
-  ATCommandsManager(); // Interpreta comandos AT
 }
 
 
@@ -974,18 +905,6 @@ void ATCommandsManager() {
     } else if (command.indexOf("at+showthrotle") > -1) {
       showThrotleMinMax();
 
-    } else if (command.indexOf(F("at+plotter")) > -1) {
-      if (command.indexOf(F("off")) > -1) {
-        eStorage.plotterOn = false;
-      }else{
-        eStorage.plotterOn = true;
-      }
-    } else if (command.indexOf("at+trace") > -1) {
-      if (command.indexOf(F("off")) > -1) {
-        eStorage.traceOn = false;
-      }else{
-        eStorage.traceOn = true;
-      }      
     } else if (command.indexOf("at+eelist") > -1) {
       //printEeprom();
       showEepromDataScreen();
@@ -1004,11 +923,10 @@ void ATCommandsManager() {
       oled1306.print(eStorage.powerBrakeMode);
 
     } else if (command.indexOf("at+mpuon") > -1) {
-      if (command.indexOf(F("on")) > -1) {
-        eStorage.mpuenabled = true;
-      }else{
-        eStorage.mpuenabled = false;
-      }      
+      eStorage.mpuenabled = true;
+
+    } else if (command.indexOf("at+mpuoff") > -1) {
+      eStorage.mpuenabled = false;
 
     } else if (command.indexOf("at+shutdown") > -1) {
       asm volatile ("jmp 0");
@@ -1056,18 +974,6 @@ String getAtData(String data, char separator, int index) { // Split string and g
     }
   }
   return found > index ? data.substring(strIndex[0], strIndex[1]) : "";
-}
-
-template<class T>
-void serialTrace(T message){
-  if(eStorage.traceOn)
-    Serial.print(message);
-}
-
-template<class T>
-void serialTraceLn(T message){
-  if(eStorage.traceOn)
-    Serial.println(message);
 }
 
 void calibrate(MPU6050 sensor) {
