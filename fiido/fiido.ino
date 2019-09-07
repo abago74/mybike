@@ -1,4 +1,4 @@
-const String VERSION = "V_2.3.5";
+const String VERSION = "V_2.3.6";
 const boolean traceOn=false;
 
 #include <EEPROM.h>
@@ -61,7 +61,7 @@ const byte SERIAL_BUFFER_SIZE = 32; // Buffer de lectura del puerto serie.
 const byte EEPROM_INIT_ADDRESS = 0; // Posición de memoria que almacena los datos de modo.
 
 // ********************** DEVOUNCE
-const byte DEBOUNCE_TIMETHRESHOLD_GEAR_PLATE = 50; // Tiempo de espera entre pulsos de interrupcion 49ms entre pulsación. 100 Pedaladas(GEAR_PLATE_PULSES*100=1200) por minuto (20 pulsos por segundo). 50ms de debounce para detectar el máximo de 20 pulsos por segundo.
+const byte DEBOUNCE_TIMETHRESHOLD_GEAR_PLATE = 100; // Tiempo de espera entre pulsos de interrupcion 49ms entre pulsación. 100 Pedaladas(GEAR_PLATE_PULSES*100=1200) por minuto (20 pulsos por segundo). 50ms de debounce para detectar el máximo de 20 pulsos por segundo.
 const int DEBOUNCE_TIMETHRESHOLD_CHANGE_MODE = 1200; // Tiempo de espera entre pulsos de interrupcion 1200ms entre pulsación
 
 // ********************** POWER
@@ -83,7 +83,7 @@ const int MAX_TIME_BETWEEN_GEAR_PLATE_PULSES = 300; // Tiempo mínimo en ms que 
 const byte DEFAULT_MAX_POWER_ANGLE = 30;
 const byte X=0, Y=1, Z=2; // Utilizadas por el método getAxisAngle
 const byte CRASH_ANGLE=50; // Anagulo de control de caida.
-const byte DEFAULT_POWER_BRAKE_DIVIDER = 50; // baja la potencia por frenada en pasos de 20%
+const byte DEFAULT_POWER_BRAKE_DIVIDER = 20; // baja la potencia por frenada en pasos de 20%
 
 // Estructura para almacenar los valores de los modos de control.
 struct EStorage {
@@ -252,6 +252,7 @@ void loop() {
       oled1306.setCursor(110, 20);
       oled1306.print(gearPlatecompleteCicleCounter);
       oled1306.display();   
+      //maxPowerValue = (maxPowerValue + calculateMaxPower())/2; // calculamos la media entre la potencia anterior y la actual.
       maxPowerValue = calculateMaxPower();
 
     } else { // El sensor no detecta pulso de pedaleo.
@@ -265,18 +266,17 @@ void loop() {
   }
   updatePower(); // actualizamos la potencia de salida.
 
-/*
-  //plotter/
-  Serial.print(currentAngle*100);
-  Serial.print("\t");
+    //plotter/
+    Serial.print((((int) currentAngle)*100)+DEFAULT_POWER_MAX_VALUE);
+    Serial.print("\t");
+      
+    //plotter
+    Serial.print(maxPowerValue);
+    Serial.print("\t");
     
-  //plotter
-  Serial.print(maxPowerValue);
-  Serial.print("\t");
-  
-  //plotter
-  Serial.println(currentPowerValue);
-*/
+    //plotter
+    Serial.println(currentPowerValue);
+
 }
 
 // Interruption Methods ***********************************************************************************
@@ -418,10 +418,19 @@ int calculateMaxPower() {
 //  Serial.print(" | ");
 
   // Calcula la potencia en base a la pedalada
-  int tmpPedalPower = (1.0 * (eStorage.powerMaxValue - eStorage.powerMinAssistenceValue) / (MIN_PLATE_TIME_SLOW - MAX_PLATE_TIME_FAST)) * (eStorage.powerMinAssistenceValue - gearPlateCompleteCicleTime) + eStorage.powerMinAssistenceValue;
-//  Serial.print("tmpPedalPower: ");
-//  Serial.print(tmpPedalPower);
-//  Serial.println(" | ");
+  int tmppedalvalue = gearPlateCompleteCicleTime;
+  if(tmppedalvalue > MIN_PLATE_TIME_SLOW)
+    tmppedalvalue = MIN_PLATE_TIME_SLOW;
+  else if(tmppedalvalue < MAX_PLATE_TIME_FAST)
+    tmppedalvalue = MAX_PLATE_TIME_FAST;
+    
+  int tmpPedalPower = (1.0 * (eStorage.powerMaxValue - eStorage.powerMinAssistenceValue) / (MIN_PLATE_TIME_SLOW - MAX_PLATE_TIME_FAST)) * (eStorage.powerMinAssistenceValue - tmppedalvalue) + eStorage.powerMinAssistenceValue;
+  if(tmpPedalPower<eStorage.powerMinAssistenceValue)
+    tmpPedalPower=eStorage.powerMinAssistenceValue;
+  //Serial.print("tmpPedal: ");
+  //Serial.print(tmppedalvalue);
+  //Serial.print(" | Power: ");
+  //Serial.println(tmpPedalPower);
   
   // Decidimos cual es la potencia más alta.
   maxPowerValueTmp = tmpAnglePower > tmpPedalPower ? tmpAnglePower : tmpPedalPower;
@@ -772,49 +781,49 @@ void ATCommandsManager() {
     }
     oled1306.setCursor(0, 10);
 
-    if (command.indexOf(F("at+save")) > -1) {
+    if (command.indexOf("at+save") > -1) {
       updateEepromData();
 
-    } else if (command.indexOf(F("at+init")) > -1) {
+    } else if (command.indexOf("at+init") > -1) {
       initDefaultEepromData();
 
-    } else if (command.indexOf(F("at+eelist")) > -1) {
+    } else if (command.indexOf("at+eelist") > -1) {
       //printEeprom();
       showEepromDataScreen();
 
-    } else if (command.indexOf(F("at+brakediv")) > -1) {
+    } else if (command.indexOf("at+brakediv") > -1) {
       eStorage.powerBrakeDivider = value>DEFAULT_POWER_BRAKE_DIVIDER?value:DEFAULT_POWER_BRAKE_DIVIDER;
       
-    } else if (command.indexOf(F("at+pwrup")) > -1) { // modo de incremento de potencia progresiva.
+    } else if (command.indexOf("at+pwrup") > -1) { // modo de incremento de potencia progresiva.
       eStorage.powerMode = (value < (sizeof(POWER_STEPTS) / 2)) ? value : POWER_STEPTS_DEFAULT_POSITION;
       oled1306.print(F("> powerBrakeMode: "));
       oled1306.print(eStorage.powerMode);
 
-    } else if (command.indexOf(F("at+pwrdw")) > -1) { // modo de decremento de potencia progresiva.
+    } else if (command.indexOf("at+pwrdw") > -1) { // modo de decremento de potencia progresiva.
       eStorage.powerBrakeMode = (value < (sizeof(POWER_STEPTS) / 2)) ? value : POWER_STEPTS_DEFAULT_POSITION;
       oled1306.print(F("> powerBrakeMode: "));
       oled1306.print(eStorage.powerBrakeMode);
 
-    } else if (command.indexOf(F("at+mpuon")) > -1) {
+    } else if (command.indexOf("at+mpuon") > -1) {
       eStorage.mpuenabled = true;
 
-    } else if (command.indexOf(F("at+mpuoff")) > -1) {
+    } else if (command.indexOf("at+mpuoff") > -1) {
       eStorage.mpuenabled = false;
 
-    } else if (command.indexOf(F("at+shutdown")) > -1) {
-      asm volatile ("  jmp 0");
+    } else if (command.indexOf("at+shutdown") > -1) {
+      asm volatile ("jmp 0");
       
-    } else if (command.indexOf(F("at+i2clist")) > -1) {
+    } else if (command.indexOf("at+i2clist") > -1) {
       checkI2cDevices();
       
     } else if (eStorage.mpuenabled) {
 
-      if (command.indexOf(F("at+anglemaxpwr")) > -1) { // ángulo para la máxima potencia;
+      if (command.indexOf("at+anglemaxpwr") > -1) { // ángulo para la máxima potencia;
         eStorage.maxPowerAngle = value < DEFAULT_MAX_POWER_ANGLE ? value : DEFAULT_MAX_POWER_ANGLE;
         oled1306.print(F("> maxPowerAngle: "));
         oled1306.print(eStorage.maxPowerAngle);
 
-      } else if (command.indexOf(F("at+mpucalibrate")) > -1) { // Calibrar posición de placa.
+      } else if (command.indexOf("at+mpucalibrate") > -1) { // Calibrar posición de placa.
         calibrate(mpu6050);
       }
 
