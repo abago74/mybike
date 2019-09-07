@@ -1,4 +1,4 @@
-const String VERSION = "V_2.3.6";
+const String VERSION = "V_2.3.8RC";
 const boolean traceOn=false;
 
 #include <EEPROM.h>
@@ -61,7 +61,7 @@ const byte SERIAL_BUFFER_SIZE = 32; // Buffer de lectura del puerto serie.
 const byte EEPROM_INIT_ADDRESS = 0; // Posición de memoria que almacena los datos de modo.
 
 // ********************** DEVOUNCE
-const byte DEBOUNCE_TIMETHRESHOLD_GEAR_PLATE = 100; // Tiempo de espera entre pulsos de interrupcion 49ms entre pulsación. 100 Pedaladas(GEAR_PLATE_PULSES*100=1200) por minuto (20 pulsos por segundo). 50ms de debounce para detectar el máximo de 20 pulsos por segundo.
+const byte DEBOUNCE_TIMETHRESHOLD_GEAR_PLATE = 60; // Tiempo de espera entre pulsos de interrupcion 49ms entre pulsación. 100 Pedaladas(GEAR_PLATE_PULSES*100=1200) por minuto (20 pulsos por segundo). 50ms de debounce para detectar el máximo de 20 pulsos por segundo.
 const int DEBOUNCE_TIMETHRESHOLD_CHANGE_MODE = 1200; // Tiempo de espera entre pulsos de interrupcion 1200ms entre pulsación
 
 // ********************** POWER
@@ -258,9 +258,9 @@ void loop() {
     } else { // El sensor no detecta pulso de pedaleo.
       //serialTraceLn(F("NO PEDALEANDO!!!!!"));
       showPedalIcon(BLACK);
-      gearPlatePulseEnd=ZERO;
+      gearPlatePulseInit=millis()-MAX_TIME_BETWEEN_GEAR_PLATE_PULSES;
+      gearPlatecompleteCicleCounter = GEAR_PLATE_PULSES;
       gearPlatePulseInit=ZERO;
-      gearPlateCompleteCicleTime=ZERO;
       maxPowerValue = eStorage.powerMinValue;
     }
   }
@@ -302,7 +302,12 @@ void gearPlatePulseInt() { // Método que incrementa el contador de pedal en cas
     if (gearPlatecompleteCicleCounter == ZERO){
       //serialTraceLn(gearPlateCompleteCicleTime);
       gearPlateCompleteCicleTime = gearPlatePulseEnd - gearPlatePulseInit;
-
+      if(gearPlateCompleteCicleTime < ZERO) // medida negativa.
+        gearPlateCompleteCicleTime = MIN_PLATE_TIME_SLOW; //Pedalada mínima
+      else if(gearPlateCompleteCicleTime > MIN_PLATE_TIME_SLOW) //Pedalada mas lenta que el mínimo 
+        gearPlateCompleteCicleTime = MIN_PLATE_TIME_SLOW; // Pedalada mínima
+      else if(gearPlateCompleteCicleTime <= MAX_PLATE_TIME_FAST) // Pedalada más rápida que el máximo
+        gearPlateCompleteCicleTime = MAX_PLATE_TIME_FAST; // Pedalada máxima
     }
 
     debounceLastGearPlatePulseTime = millis(); //Debounce Guardamos el tiempo de la operación para bloquear el rebote.
@@ -416,21 +421,14 @@ int calculateMaxPower() {
 //  Serial.print("tmpAnglePower: ");
 //  Serial.print(tmpAnglePower);
 //  Serial.print(" | ");
-
-  // Calcula la potencia en base a la pedalada
-  int tmppedalvalue = gearPlateCompleteCicleTime;
-  if(tmppedalvalue > MIN_PLATE_TIME_SLOW)
-    tmppedalvalue = MIN_PLATE_TIME_SLOW;
-  else if(tmppedalvalue < MAX_PLATE_TIME_FAST)
-    tmppedalvalue = MAX_PLATE_TIME_FAST;
     
-  int tmpPedalPower = (1.0 * (eStorage.powerMaxValue - eStorage.powerMinAssistenceValue) / (MIN_PLATE_TIME_SLOW - MAX_PLATE_TIME_FAST)) * (eStorage.powerMinAssistenceValue - tmppedalvalue) + eStorage.powerMinAssistenceValue;
+  int tmpPedalPower = (1.0 * (eStorage.powerMaxValue - eStorage.powerMinAssistenceValue) / (MIN_PLATE_TIME_SLOW - MAX_PLATE_TIME_FAST)) * (eStorage.powerMinAssistenceValue - gearPlateCompleteCicleTime) + eStorage.powerMinAssistenceValue;
   if(tmpPedalPower<eStorage.powerMinAssistenceValue)
     tmpPedalPower=eStorage.powerMinAssistenceValue;
-  //Serial.print("tmpPedal: ");
-  //Serial.print(tmppedalvalue);
-  //Serial.print(" | Power: ");
-  //Serial.println(tmpPedalPower);
+  /*Serial.print("gearPlateCompleteCicleTime: ");
+  Serial.print(gearPlateCompleteCicleTime);
+  Serial.print(" | tmppedalvalue: ");
+  Serial.println(tmppedalvalue);*/
   
   // Decidimos cual es la potencia más alta.
   maxPowerValueTmp = tmpAnglePower > tmpPedalPower ? tmpAnglePower : tmpPedalPower;
@@ -575,7 +573,7 @@ void showMaxPowerScreen() {
     oled1306.print(F("> Y:"));
     oled1306.print(currentAngle);
     oled1306.print(F(" PULSE :"));
-    if(gearPlateCompleteCicleTime>0)
+    if(gearPlateCompleteCicleTime>0 && (millis() - gearPlatePulseEnd < MAX_TIME_BETWEEN_GEAR_PLATE_PULSES))
       oled1306.print(gearPlateCompleteCicleTime);
     else
       oled1306.print(F("???"));
