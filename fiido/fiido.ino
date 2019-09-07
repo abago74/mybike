@@ -1,5 +1,5 @@
-const String VERSION = "V_2.4.3";
-const boolean plotteron = false;
+const String VERSION = "V_2.4.4";
+const boolean plotteron = true;
 const boolean traceOn=false;
 
 #include <EEPROM.h>
@@ -130,7 +130,8 @@ unsigned int gearPlateCompleteCicleValue; // Contenedor del valor tomado por una
 // ********************** POWER
 unsigned int maxPowerValue; // Máxima potencia calculada según pedalada y la inclinación.
 unsigned int currentPowerValue; // Potencia actual
-float throttleValue; // Lectura de tensión de acelerador.
+float currentThrottleValue; // Lectura de tensión de acelerador.
+unsigned int cruisePower;
 
 // ********************** MODE
 int powerModeChangeTrigger; // Trigger de solicitud de cambio de modo . La variable es cambiada de estado por el método changeModeInt lanzado por la interrupción para detectar el tipo. Valores 0/1/2.
@@ -196,7 +197,7 @@ void setup() {
   powerModeChangeTrigger = ZERO;
   currentAngle = LZERO;
   devounceMpuTimeThreshold = ZERO; // Tiempo entre las medidas de ángulo
-  
+  cruisePower=4000;
   crashAngleAxis=(eStorage.powerAngleAxis == X)?Y:X; // Eje que controla el ángulo de control de caida
 
   //initFlashLeds(); // Ejecuta los leds de inicio de script. y muestra los modos.
@@ -209,14 +210,14 @@ void setup() {
 
   showEepromDataScreen();
 }
-;
+
 // Main Program
 void loop() {
     
   //serialTraceLn(F("1 loop"));
   changeModeListener(); // Controla powerModeChangeTrigger para cambiar los modos
-  throttleValue=analogRead(THROTTLE_IN); // Lee el valor analógico del acelerador. *5/1023 para obtener voltios.
-  //Serial.println(throttleValue*5/1023);
+  currentThrottleValue=analogRead(THROTTLE_IN); // Lee el valor analógico del acelerador. *5/1023 para obtener voltios.
+  //Serial.println(currentThrottleValue*5/1023);
   serialAtCommandListener(); // Lee comandos AT por puerto serie
   ATCommandsManager(); // Interpreta comandos AT
 
@@ -260,7 +261,7 @@ void loop() {
       oled1306.setCursor(110, 20);
       oled1306.print(gearPlatecompleteCicleCounter);
       oled1306.display();   
-      maxPowerValue = calculateMaxPower();
+      maxPowerValue = (maxPowerValue + calculateMaxPower())/2;
       
     }else{
       //serialTrace("."); 
@@ -280,7 +281,10 @@ void loop() {
       Serial.print("\t");
       
       //plotter
-      Serial.println(currentPowerValue);
+      Serial.print(currentPowerValue);
+      Serial.print("\t");
+      
+      Serial.println(currentThrottleValue);
   }
 }
 // Interruption Methods ***********************************************************************************
@@ -393,7 +397,7 @@ int calculateMaxPower() {
 //  serialTrace("tmpAnglePower: ");
 //  serialTrace(tmpAnglePower);
 //  serialTrace(" | ");
-    
+
   int tmpPedalPower = (1.0 * (eStorage.powerMaxValue - eStorage.powerMinAssistenceValue) / (MIN_PLATE_TIME_SLOW - MAX_PLATE_TIME_FAST)) * (eStorage.powerMinAssistenceValue - (gearPlateLastCompleteCicleValue*GEAR_PLATE_PULSES)) + eStorage.powerMinAssistenceValue;
   if(tmpPedalPower<eStorage.powerMinAssistenceValue)
     tmpPedalPower=eStorage.powerMinAssistenceValue;
@@ -401,6 +405,10 @@ int calculateMaxPower() {
   serialTrace(gearPlateCompleteCicleTime);
   serialTrace(" | tmppedalvalue: ");
   serialTraceLn(tmppedalvalue);*/
+  
+  if(cruisePower>tmpPedalPower) // si el crucero es mayor que la pedalada usamos en crucero.
+    tmpPedalPower = cruisePower;
+  
   
   // Decidimos cual es la potencia más alta.
   maxPowerValueTmp = tmpAnglePower > tmpPedalPower ? tmpAnglePower : tmpPedalPower;
@@ -432,6 +440,10 @@ void updatePower() {
 
   showMaxPowerScreen();
 
+  // DAC DEPENDIENDO DE TENSIÓN EN VOLTIOS
+  uint32_t valor=(4096/5)*currentThrottleValue;
+  dac4725.setVoltage(valor, false); // fija voltaje en DAC
+  // DAC - Convertir currentPowerValue a valor
   //dac4725.setVoltage(currentPowerValue, false); // Actualiza la salida con la potencia de acelerador por medio del DAC. // retocar rango de valores ya que el dac va de 0 a 4096 (0 - 5V)
   analogWrite(POWER_OUT, currentPowerValue / 20); // Actualiza la salida con la potencia de acelerador por medio del PWM.
 }
@@ -546,7 +558,7 @@ void showMaxPowerScreen() {
     oled1306.setCursor(0, 0);
     oled1306.print(eStorage.powerAngleAxis==X?"> X: ":"> Y: ");
     oled1306.print(currentAngle);
-    oled1306.print(F(" PULSE :"));
+    oled1306.print(F(" PLSE:"));
     if(millis()-gearPlateLastPulseTime<MAX_TIME_BETWEEN_GEAR_PLATE_PULSES)
       oled1306.print(gearPlateLastCompleteCicleValue*GEAR_PLATE_PULSES);
     else
