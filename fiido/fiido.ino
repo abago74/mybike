@@ -1,4 +1,4 @@
-const String VERSION = "V_2.4.1RC";
+const String VERSION = "V_2.4.2";
 const boolean plotteron = true;
 const boolean traceOn=false;
 
@@ -89,6 +89,9 @@ const byte DEFAULT_POWER_BRAKE_DIVIDER = 20; // baja la potencia por frenada en 
 // Estructura para almacenar los valores de los modos de control.
 struct EStorage {
   boolean mpuenabled = false;
+  byte powerAngleAxis=X; // Eje que controla el ángulo de potencia
+  boolean powerAngleAxisInverter=true; // Inversor del eje de potencia
+
   int XAccelOffset=ZERO;
   int YAccelOffset=ZERO;
   int ZAccelOffset=ZERO;
@@ -104,6 +107,7 @@ struct EStorage {
 
   byte maxPowerAngle = DEFAULT_MAX_POWER_ANGLE;
   byte powerBrakeDivider = DEFAULT_POWER_BRAKE_DIVIDER;
+  
 };
 // ------------------------- VARS -------------------------------
 
@@ -133,8 +137,6 @@ int powerModeChangeTrigger; // Trigger de solicitud de cambio de modo . La varia
 // ********************** MPU6050
 float currentAngle; //Variable que almacena el ángulo de potencia.
 long devounceMpuTimeThreshold; // Tiempo entre las medidas de ángulo
-byte powerAngleAxis; // Eje que controla el ángulo de potencia
-boolean powerAngleAxisInverter; // Inversor del eje de potencia
 byte crashAngleAxis; // Eje que controla el ángulo de control de caida
 
 // ********************** DEFAULT
@@ -193,9 +195,13 @@ void setup() {
   powerModeChangeTrigger = ZERO;
   currentAngle = LZERO;
   devounceMpuTimeThreshold = ZERO; // Tiempo entre las medidas de ángulo
-  powerAngleAxis = X; // Eje que controla el ángulo de potencia
-  powerAngleAxisInverter = true; // Inversor del eje de potencia
-  crashAngleAxis=(powerAngleAxis == X)?Y:X; // Eje que controla el ángulo de control de caida
+  
+  crashAngleAxis=(eStorage.powerAngleAxis == X)?Y:X; // Eje que controla el ángulo de control de caida
+  Serial.print("********");
+  Serial.print(eStorage.powerAngleAxis);
+  Serial.print(" ******** ");
+  Serial.println(crashAngleAxis);
+  
 
   //initFlashLeds(); // Ejecuta los leds de inicio de script. y muestra los modos.
 
@@ -218,8 +224,8 @@ void loop() {
   ATCommandsManager(); // Interpreta comandos AT
 
   if (eStorage.mpuenabled && (millis() - devounceMpuTimeThreshold > DEVOUNCE_MPU_TIME_THRESHOLD_CONST)) { // leemos el valor de inclinación (Y) cada 2 segundos para ayudar a calcular la potencia.
-    currentAngle=getAxisAngle(powerAngleAxis);
-    if(powerAngleAxisInverter)
+    currentAngle=getAxisAngle(eStorage.powerAngleAxis);
+    if(eStorage.powerAngleAxisInverter)
       currentAngle=-currentAngle;
     devounceMpuTimeThreshold = millis();
   }
@@ -475,6 +481,8 @@ void initDefaultEepromData() {
   eStorage.powerMode = POWER_STEPTS_DEFAULT_POSITION;
   eStorage.powerBrakeMode = POWER_STEPTS_DEFAULT_POSITION;
   eStorage.maxPowerAngle = DEFAULT_MAX_POWER_ANGLE;
+  eStorage.powerAngleAxis=X;
+  eStorage.powerAngleAxisInverter=true;
   eStorage.XAccelOffset=ZERO;
   eStorage.YAccelOffset=ZERO;
   eStorage.ZAccelOffset=ZERO;
@@ -539,7 +547,7 @@ void showMaxPowerScreen() {
 
     oled1306.clearDisplay();
     oled1306.setCursor(0, 0);
-    oled1306.print(F("> Y:"));
+    oled1306.print(eStorage.powerAngleAxis==X?"> X: ":"> Y: ");
     oled1306.print(currentAngle);
     oled1306.print(F(" PULSE :"));
     if(millis()-gearPlateLastPulseTime<MAX_TIME_BETWEEN_GEAR_PLATE_PULSES)
@@ -791,6 +799,12 @@ void ATCommandsManager() {
           oled1306.print(F("> maxPowerAngle: "));
           oled1306.print(eStorage.maxPowerAngle);
         }
+
+    } else if (command.indexOf("at+angledir") > -1) { // ángulo de control de inclinación;
+
+      eStorage.powerAngleAxis=(value<-1)?Y:X;
+      eStorage.powerAngleAxisInverter=(value>0);
+      crashAngleAxis=(eStorage.powerAngleAxis == X)?Y:X; // Eje que controla el ángulo de control de caida
 
     } else if (command.indexOf("at+mpucalibrate") > -1) { // Calibrar posición de placa.
         if (eStorage.mpuenabled)
