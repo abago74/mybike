@@ -1,4 +1,4 @@
-const String VERSION = "V_2.6.3";
+const String VERSION = "V_2.6.4RC";
 
 #include <EEPROM.h>
 
@@ -80,7 +80,7 @@ const byte UNDEFINED_CHANGE_MODE = 0, POWER_CHANGE_MODE = 1, POWERBRAKE_CHANGE_M
 const int PLATE_TIME_FAST = 60; // Tiempo que se tarda en dar una vuelta de plato
 const int PLATE_TIME_SLOW = 200; // Tiempo que se tarda en dar una vuelta de plato
 const int MAX_TIME_BETWEEN_GEAR_PLATE_PULSES = 300; // Tiempo mínimo en ms que se tiene que estar pedaleando para empezar a recibir potencia.
-const byte MEDIA_PULSE_COUNTER=20; // Pulsos leidos para sacar la media de cadencia.
+const byte MEDIA_PULSE_COUNTER=10; // Pulsos leidos para sacar la media de cadencia.
 const byte START_PEDAL_MEDIA_COUNTER=6;
 
 // ********************** MPU
@@ -234,14 +234,15 @@ void setup() {
     flaginit=true;
   }
 }
-int cont=0;
-int count=0;
 
 void loop(){
+  
   if(flaginit){ // inicializamos dejando pulsado el pin de freno al iniciar. Después contamos los pulsos para detectar que comando mandar.
     initThrotleMinMax();
     flaginit=false;
+ 
   }else{  
+    delay(1);
     digitalWrite(STATUS_LED_OUT, !digitalRead(STATUS_LED_OUT)); 
 
     changeModeListener(); // Controla powerModeChangeTrigger para cambiar los modos
@@ -290,11 +291,12 @@ void loop(){
               currentPulseCalculatedValue = calculatedPulseContainer / MEDIA_PULSE_COUNTER;
               calculatedPulseContainer = (gearPlateLastPulseTime - gearPlatePreviousPulseTime) ;
               mediaPulseCounter = MEDIA_PULSE_COUNTER;
+              maxPowerValue = calculateMaxPower();
             }
             gearPlatePreviousPulseTime=gearPlateLastPulseTime;
           }  
           
-          maxPowerValue = calculateMaxPower();
+          
                   
           serialTrace("pedaleando: (");
           serialTrace(continuousCyclePulseCounter);
@@ -320,10 +322,7 @@ void loop(){
         
         //plotter/
         //Serial.print((((int) currentAngle)*100)+DEFAULT_POWER_MAX_VALUE+1000);
-        float t = eStorage.powerMinValue + (currentAngle * tmpanglepowermedia);
-        if( t > eStorage.powerMaxValue )
-        t =eStorage.powerMaxValue;
-        Serial.print((int) t);
+        Serial.print(currentPulseCalculatedValue);
         Serial.print("\t");
           
         //plotter
@@ -468,7 +467,8 @@ int calculateMaxPower() {
 } 
 
 void updatePower() {
-  serialTrace(F("7 - updatePower"));
+  serialTraceLn(currentPowerValue);
+  //serialTrace(F("7 - updatePower"));
   if (currentPowerValue < maxPowerValue) { // incrementa progresivamente la potencia hasta la máxima.
     if (currentAngle <= CUT_POWER_ANGLE){
       //Si el ángulo es menos a -10º anula la potencia
@@ -500,7 +500,7 @@ void updatePower() {
 
   dac4725.setVoltage(currentPowerValue, false); // fija voltaje en DAC
 
-  serialTraceLn(currentPowerValue);
+  //serialTraceLn(currentPowerValue);
   // DAC DEPENDIENDO DE TENSIÓN EN VOLTIOS
   //int ctv = analogInputRangeToDacRange(currentThrottleValue);
   //dac4725.setVoltage(ctv, false); // fija voltaje en DAC
